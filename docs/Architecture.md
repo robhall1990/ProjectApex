@@ -37,6 +37,10 @@ com.projectapex
 │   └── navigation/    ApexDestination/ApexBottomDestination (routes), ApexNavHost
 │                       (top-level graph), ApexMainScreen (bottom-nav shell),
 │                       ApexBottomNavBar (reusable nav bar)
+├── domain/
+│   ├── model/         Driver, TyreCompound, CarState, RaceState — pure Kotlin,
+│   │                   no Android imports
+│   └── race/          RaceEngine — owns the current RaceState
 ├── feature/
 │   ├── splash/
 │   ├── race/          Screen + ViewModel + NextSessionCard + RaceIntelligenceCard
@@ -55,22 +59,77 @@ Race dashboard needed them — they were not scaffolded speculatively.
 
 `core/util` still does not exist, for the same reason.
 
-`data/` and `domain/` are absent for the same reason: there is no repository,
-API client, or use case yet, because no feature reads or writes real data.
-When the first feature needs one (most likely live timing), add:
+`domain/` now exists (see [Domain layer](#domain-layer) below), introduced
+specifically because `RaceEngine` needed somewhere to own race state that has
+no Android dependency at all — not scaffolded ahead of need.
+
+`data/` is still absent: there is no repository or API client yet, because
+nothing produces real race data. When the first data source exists (most
+likely a live timing feed), add:
 
 ```
 data/
 ├── remote/        Retrofit service interfaces + DTOs
 ├── local/         Room entities/DAOs
-└── repository/    Repository implementations, exposed via a domain interface
-domain/
-├── model/         Plain Kotlin domain models (not DTOs, not entities)
-└── repository/    Repository interfaces consumed by ViewModels
+└── repository/    Repository implementations that push into RaceEngine
 ```
 
 Repositories should be bound via Hilt `@Binds` in a module under
-`core/di/` (also not yet created), not instantiated directly in ViewModels.
+`core/di/` (not yet created), not instantiated directly in ViewModels.
+`domain/repository/` is deliberately not scaffolded yet either — there is
+nothing to abstract over until a real data source exists to sit behind an
+interface.
+
+## Domain layer
+
+Project Apex's eventual shape is:
+
+```
+External Data Source -> RaceEngine -> Android UI
+                              |
+                              +------> AI Insight Engine (future)
+```
+
+`RaceEngine` (`domain/race/RaceEngine.kt`) owns the single current
+`RaceState` and exposes it as `StateFlow<RaceState>`. It is the one place
+race state is allowed to live — everything downstream (today's UI, a future
+AI insight engine) only ever reads from it; nothing downstream is allowed to
+hold its own copy of race state or mutate it directly.
+
+`RaceEngine` is intentionally minimal for now:
+
+- **No networking, no persistence.** It has no idea where `RaceState`
+  updates come from. A future data source calls `updateState(newState)`;
+  `RaceEngine` doesn't care if that's a live timing feed, a replay file, or
+  a test.
+- **No DI wiring yet.** It isn't a Hilt `@Singleton` and nothing constructs
+  it via injection, because nothing currently consumes it. The Race
+  dashboard still reads its own hardcoded `RaceUiState` — wiring
+  `RaceEngine` into a ViewModel is a future ticket, not this one. When that
+  happens, bind it as a Hilt singleton (one instance app-wide) rather than
+  constructing it per-ViewModel.
+- **Thread safety and observability are both free.** `MutableStateFlow`
+  guarantees atomic value assignment and always replays its latest value to
+  every collector, so no manual synchronization was needed to satisfy
+  "thread safe" and "observable."
+- **No interface.** `RaceEngine` is a concrete class, not an abstraction
+  over an interface — there is only one implementation and no test double
+  needed (tests exercise the real thing), so an interface would be
+  unused indirection.
+
+`domain/model` reuses `core.model.SessionStatus` for `RaceState.sessionStatus`
+rather than defining a second, competing status enum. This does mean
+`domain` currently depends on a type that lives in `core` — a slightly
+inverted dependency direction, since `domain` is meant to be the lower-level
+layer other code depends on. It was judged better than duplicating the enum;
+a future cleanup ticket that already needs to touch `feature/race`'s imports
+would be the right time to relocate `SessionStatus` into `domain/model`
+properly.
+
+`RaceStateFactory` (five placeholder drivers — Norris, Verstappen, Piastri,
+Russell, Hamilton) lives under `app/src/test`, not `app/src/main` — this is
+enforced at compile time, not just by convention: production code physically
+cannot import a class that only exists in the test source set.
 
 ## State management
 

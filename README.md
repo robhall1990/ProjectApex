@@ -70,6 +70,9 @@ com.projectapex
 │   ├── model/         Shared, feature-agnostic domain-ish models (e.g. SessionState)
 │   ├── ui/            Reusable Compose components (e.g. ApexCard)
 │   └── navigation/    Top-level NavHost, bottom-nav shell, route definitions
+├── domain/
+│   ├── model/         Race domain models (Driver, CarState, RaceState, ...) — pure Kotlin
+│   └── race/          RaceEngine — owns the current RaceState as a StateFlow
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
 │   ├── race/          Apex Command Centre dashboard (Screen + ViewModel + cards)
@@ -79,9 +82,11 @@ com.projectapex
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
 ```
 
-`data/` and `domain/` packages are intentionally not present yet — they will
-be introduced when the first real feature (e.g. live timing) needs a
-repository or use case, rather than scaffolded empty.
+`domain/` now holds the first race data model and `RaceEngine`, which owns
+race state as a `StateFlow` — pure Kotlin, no Android or networking
+dependencies, and not yet wired into any UI. `data/` is still absent: it will
+be introduced when a real data source (e.g. a live timing feed) exists to
+push updates into `RaceEngine`.
 
 ## Current screens
 
