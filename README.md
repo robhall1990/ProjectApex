@@ -72,21 +72,26 @@ com.projectapex
 │   └── navigation/    Top-level NavHost, bottom-nav shell, route definitions
 ├── domain/
 │   ├── model/         Race domain models (Driver, CarState, RaceState, ...) — pure Kotlin
-│   └── race/          RaceEngine — owns the current RaceState as a StateFlow
+│   ├── race/          RaceEngine — owns the current RaceState as a StateFlow
+│   └── simulation/    RaceSimulator — generates believable fake race updates
+│                       for UI development (dev-only, not production data)
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
 │   ├── race/          Apex Command Centre dashboard (Screen + ViewModel + cards)
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
-│   └── settings/      Settings tab (Screen + ViewModel)
+│   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
 ├── ApexApplication.kt Hilt application entry point
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
 ```
 
-`domain/` now holds the first race data model and `RaceEngine`, which owns
-race state as a `StateFlow` — pure Kotlin, no Android or networking
-dependencies, and not yet wired into any UI. `data/` is still absent: it will
-be introduced when a real data source (e.g. a live timing feed) exists to
-push updates into `RaceEngine`.
+`domain/` holds the race data model, `RaceEngine` (owns race state as a
+`StateFlow`), and `RaceSimulator` (a development-only tool that generates
+believable fake race updates once a second and pushes them into
+`RaceEngine`) — all pure Kotlin, no Android or networking dependencies. The
+Race dashboard is not yet wired to read from `RaceEngine`; only Settings'
+Developer Mode controls talk to the simulator so far. `data/` is still
+absent: it will be introduced when a real data source (e.g. a live timing
+feed) exists to push updates into `RaceEngine`.
 
 ## Current screens
 
@@ -98,4 +103,16 @@ push updates into `RaceEngine`.
   data), an "ENTER LIVE SESSION" button (currently a no-op), and a Race
   Intelligence card listing upcoming capabilities.
 - **Analysis** — placeholder tab for future session analysis tooling.
-- **Settings** — placeholder tab for user preferences.
+- **Settings** — placeholder tab for user preferences, plus a **Developer
+  Mode** card (see below).
+
+## Developer Mode (manual testing only)
+
+Settings has a "Developer Mode" card with **Start Simulated Race** / **Stop
+Simulation** buttons and a status line. Starting it seeds a 20-car field
+(VER, NOR, PIA, LEC, HAM, RUS + 14 placeholders) into `RaceEngine` and
+advances it once a second — gaps drift, tyres age, laps tick over, and cars
+occasionally swap adjacent positions. This is entirely fake data for
+exercising the app during development; it is not visible anywhere in the
+Race dashboard yet, since that screen doesn't read from `RaceEngine` yet
+either.

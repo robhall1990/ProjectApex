@@ -34,13 +34,17 @@ com.projectapex
 │   ├── theme/        Cross-feature Compose theme (colors, typography, MaterialTheme wrapper)
 │   ├── model/         Shared state models with no feature owner (e.g. SessionState)
 │   ├── ui/            Reusable Compose components (e.g. ApexCard)
-│   └── navigation/    ApexDestination/ApexBottomDestination (routes), ApexNavHost
-│                       (top-level graph), ApexMainScreen (bottom-nav shell),
-│                       ApexBottomNavBar (reusable nav bar)
+│   ├── navigation/    ApexDestination/ApexBottomDestination (routes), ApexNavHost
+│   │                   (top-level graph), ApexMainScreen (bottom-nav shell),
+│   │                   ApexBottomNavBar (reusable nav bar)
+│   └── di/            Hilt modules for domain types that can't be constructor-
+│                       injected directly (e.g. a qualified CoroutineDispatcher)
 ├── domain/
 │   ├── model/         Driver, TyreCompound, CarState, RaceState — pure Kotlin,
 │   │                   no Android imports
-│   └── race/          RaceEngine — owns the current RaceState
+│   ├── race/          RaceEngine — owns the current RaceState
+│   └── simulation/    RaceSimulator — generates believable fake RaceState
+│                       updates for UI development, sits above RaceEngine
 ├── feature/
 │   ├── splash/
 │   ├── race/          Screen + ViewModel + NextSessionCard + RaceIntelligenceCard
@@ -102,12 +106,13 @@ hold its own copy of race state or mutate it directly.
   updates come from. A future data source calls `updateState(newState)`;
   `RaceEngine` doesn't care if that's a live timing feed, a replay file, or
   a test.
-- **No DI wiring yet.** It isn't a Hilt `@Singleton` and nothing constructs
-  it via injection, because nothing currently consumes it. The Race
-  dashboard still reads its own hardcoded `RaceUiState` — wiring
-  `RaceEngine` into a ViewModel is a future ticket, not this one. When that
-  happens, bind it as a Hilt singleton (one instance app-wide) rather than
-  constructing it per-ViewModel.
+- **`@Singleton @Inject constructor()`.** Hilt constructs and shares exactly
+  one `RaceEngine` app-wide — `RaceSimulator` and any future ViewModel that
+  reads race state all get the same instance. Both annotations are plain
+  `javax.inject`, so the file still has no Hilt/Android framework import of
+  its own. The Race dashboard still reads its own hardcoded `RaceUiState`,
+  though — wiring a ViewModel to actually read from `RaceEngine` is a future
+  ticket, not this one.
 - **Thread safety and observability are both free.** `MutableStateFlow`
   guarantees atomic value assignment and always replays its latest value to
   every collector, so no manual synchronization was needed to satisfy
@@ -130,6 +135,46 @@ properly.
 Russell, Hamilton) lives under `app/src/test`, not `app/src/main` — this is
 enforced at compile time, not just by convention: production code physically
 cannot import a class that only exists in the test source set.
+
+### RaceSimulator
+
+```
+RaceSimulator -> RaceEngine -> UI
+```
+
+`RaceSimulator` (`domain/simulation/RaceSimulator.kt`) is a development tool,
+not production code: it generates believable (not physically accurate)
+`RaceState` updates once a second and pushes them into `RaceEngine`, so the UI
+can be built and demoed before any live timing feed exists. Unlike
+`RaceStateFactory`, it *does* ship in `app/src/main` — Settings' Developer
+Mode controls call it at runtime — but nothing in `feature/` imports it
+directly except `SettingsViewModel`; every other screen only ever reads
+`RaceEngine`.
+
+Design notes:
+
+- **`@Singleton @Inject constructor(RaceEngine, @SimulationDispatcher CoroutineDispatcher)`.**
+  The dispatcher is injected, not hardcoded to `Dispatchers.Default`,
+  specifically so `RaceSimulatorTest` can substitute a `StandardTestDispatcher`
+  bound to the test's `TestCoroutineScheduler` — that makes the real
+  `delay(1_000)` in the tick loop advance under virtual time
+  (`advanceTimeBy`/`runCurrent`) instead of costing a real second per test.
+  `@SimulationDispatcher` is a plain `javax.inject.Qualifier` annotation
+  living in `domain/simulation/`; the actual `@Provides` binding
+  (`core/di/DomainModule.kt`) lives outside `domain/`, since a Hilt `@Module`
+  necessarily imports `dagger.hilt.*`.
+- **No interface**, for the same reason as `RaceEngine` — one implementation,
+  tests exercise the real thing.
+- **Own `CoroutineScope`.** `RaceSimulator` creates
+  `CoroutineScope(SupervisorJob() + dispatcher)` itself rather than being
+  handed one, since its background tick loop's lifetime is the simulator's
+  own lifetime (app-wide, as a Hilt singleton), not tied to any particular
+  screen or ViewModel.
+- **Synthetic grid, not fake-data-in-the-UI.** `SyntheticGridFactory` builds
+  the 20-car starting grid (6 named drivers — VER/NOR/PIA/LEC/HAM/RUS — plus
+  14 placeholders) and is `internal`, only usable by `RaceSimulator` itself.
+  The UI never sees or constructs fake cars directly; it only ever reads
+  whatever `RaceEngine.state` currently holds.
 
 ## State management
 
@@ -214,18 +259,25 @@ there), so the cost is a slower debug build, not a bloated release APK.
 
 ## Dependency injection
 
-Hilt is wired at three points:
+Hilt is wired at these points:
 
 - `ApexApplication` — `@HiltAndroidApp`.
 - `MainActivity` — `@AndroidEntryPoint`.
 - Every ViewModel — `@HiltViewModel`, obtained in Compose via
   `hiltViewModel()`.
+- `RaceEngine` and `RaceSimulator` — `@Singleton @Inject constructor(...)`,
+  constructor-injected directly (no `@Module` needed for either class
+  itself — Hilt/Dagger discovers `@Inject` constructors automatically).
+- `core/di/DomainModule.kt` — the one Hilt `@Module` in the project so far,
+  `@InstallIn(SingletonComponent::class)`, providing the one thing that
+  *can't* be constructor-injected: a `@SimulationDispatcher`-qualified
+  `CoroutineDispatcher` (`Dispatchers.Default`), since `CoroutineDispatcher`
+  has no injectable constructor of its own.
 
-There are no Hilt modules yet (no `core/di/` package). Retrofit, OkHttp,
-Room, and Coil are present as Gradle dependencies for future networking and
-persistence work, but are deliberately not wired into DI or used anywhere —
-adding a `NetworkModule` or `DatabaseModule` before there is a real API
-client or entity would be dead code.
+Retrofit, OkHttp, Room, and Coil are present as Gradle dependencies for
+future networking and persistence work, but are deliberately not wired into
+DI or used anywhere — adding a `NetworkModule` or `DatabaseModule` before
+there is a real API client or entity would be dead code.
 
 ## Testing strategy
 
@@ -233,6 +285,13 @@ client or entity would be dead code.
   Android/Hilt/Compose dependency, run on the JVM. `RaceViewModelTest`
   asserts the default `RaceUiState` (offline session, event name, capability
   list) without touching Compose or Android at all.
+- **Domain unit tests** (`app/src/test`) — `RaceEngineTest` and
+  `RaceSimulatorTest` construct `RaceEngine()`/`RaceSimulator(...)` directly,
+  bypassing Hilt entirely (there's no Android context needed to build a pure
+  Kotlin class). `RaceSimulatorTest` passes a `StandardTestDispatcher(testScheduler)`
+  in place of the Hilt-provided `Dispatchers.Default`, so `advanceTimeBy()`
+  fast-forwards the simulator's real `delay(1_000)` tick loop under virtual
+  time instead of the test actually waiting on a wall clock.
 - **Compose UI / navigation tests** (`app/src/androidTest`) — use
   `createAndroidComposeRule<MainActivity>()` plus `HiltAndroidRule` for
   screens wired through Hilt, and a custom `HiltTestRunner`

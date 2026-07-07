@@ -6,4 +6,11 @@
     <string name="race_enter_live_session">ENTER LIVE SESSION</string>
     <string name="race_intelligence_title">Race Intelligence</string>
     <string name="race_intelligence_no_active_session">No active session</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_developer_mode_title">Developer Mode</string>
+    <string name="settings_simulation_status_running">Simulation running</string>
+    <string name="settings_simulation_status_stopped">Simulation stopped</string>
+    <string name="settings_start_simulated_race">Start Simulated Race</string>
+    <string name="settings_stop_simulation">Stop Simulation</string>
 </resources>
