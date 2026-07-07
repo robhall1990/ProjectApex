@@ -56,8 +56,9 @@ com.projectapex
 │   ├── race/          Screen + one RaceViewModel, combining RaceTimeline
 │   │   │               (race data + replay position) and RaceEngine ->
 │   │   │               RaceIntelligenceEngine (insights) into one RaceUiState
-│   │   └── components/  UnwrappedTrackView, ReplayControls, RaceIntelligenceSection,
-│   │                     RaceInsightCard, RaceLeaderboard, LeaderboardRow, SectionHeader
+│   │   └── components/  SessionHeader, RaceStatusBar, UnwrappedTrackView,
+│   │                     RaceIntelligenceSection, RaceInsightCard, RaceLeaderboard,
+│   │                     LeaderboardRow, PanelHeader, SectionCard, StatusChip, InfoRow
 │   ├── analysis/
 │   └── settings/      Screen + ViewModel + DeveloperModeCard (drives RaceSimulator)
 ├── ApexApplication.kt
@@ -365,13 +366,60 @@ rather than reusing a Race-specific component.
 
 ## Race visualisation
 
-`UnwrappedTrackView` (`feature/race/components/UnwrappedTrackView.kt`) is
-explicitly a *race-distance* visualisation, not a geographical track map: a
-horizontal ribbon from START to FINISH, with each car placed left-to-right by
-race progress and stacked top-to-bottom by position. It renders purely from
-the `RaceState` it's given — it has no reference to `RaceEngine` or
-`RaceSimulator` at all, satisfying "the UI must not know about the
-simulator" by construction rather than by convention.
+The Race screen (APX-009) is five vertically stacked sections, each its own
+component, composed in `RaceScreen.kt` with no layout logic of its own beyond
+a scrollable `Column`: `SessionHeader`, `RaceStatusBar`, `UnwrappedTrackView`,
+`RaceIntelligenceSection`, `RaceLeaderboard`.
+
+**Design system primitives** (`feature/race/components/`), extracted
+specifically to stop every section hand-rolling the same structure:
+
+- `PanelHeader` (renamed from `SectionHeader` in APX-008 — the ticket named
+  this component `PanelHeader`, and keeping both names around for the same
+  job would itself be the duplication this ticket asked to eliminate).
+  Consistent title styling, reused at multiple hierarchy levels via a
+  `style` override: the large top banner as well as every section's own
+  title.
+- `SectionCard` wraps `ApexCard` + `PanelHeader` + a padded content slot —
+  the "titled card" pattern every section previously wrote out by hand.
+  `UnwrappedTrackView`, `RaceIntelligenceSection`, `RaceLeaderboard`, and
+  `RaceStatusBar` all just call `SectionCard(title = ...) { ... }` now.
+- `StatusChip` — a labelled pill with an explicit `enabled` flag for the
+  three not-yet-real signals (Track/Weather/DRS): dimmed rather than hidden,
+  so the UI honestly shows "this exists as a concept, not as data yet"
+  rather than pretending the feature isn't planned.
+- `InfoRow` — a plain label/value row, used for the session header's "Lap
+  24 / 52" line.
+
+`SessionHeader` (`feature/race/components/SessionHeader.kt`) replaces
+APX-008's `ReplayControls`, absorbing its role (LIVE/REPLAY banner +
+Previous/Play-Pause/Next) plus the event name and lap counter. Bringing back
+`timelinePosition`/`timelineSize` to `RaceUiState` (dropped in APX-008) let
+the Previous/Next buttons properly disable at the two ends of recorded
+history again — this is UI-state plumbing (re-exposing values
+`RaceTimelineState` already computed), not new domain logic, so it doesn't
+conflict with the ticket's "do not add new race logic." The event name
+("British Grand Prix") is a static string resource, not a new `RaceState`
+field — adding a real event-name concept to the domain model would be race
+logic, out of scope for a UX-only ticket.
+
+`RaceStatusBar` (`feature/race/components/RaceStatusBar.kt`) is a
+`FlowRow` (wraps onto multiple lines on narrow screens rather than
+requiring horizontal scrolling) of `StatusChip`s: "Session" shows the raw
+domain `SessionStatus` (OFFLINE/LIVE); "Simulation" shows whether
+`raceState.cars` is non-empty — a distinct, if currently correlated, signal
+that could diverge from a richer future data source; "Replay" only appears
+while `isReplayMode` is true; "Track"/"Weather"/"DRS" are permanent, always
+`enabled = false` placeholders. None of this required touching
+`RaceSimulator`, `RaceEngine`, or `RaceIntelligenceEngine` — every chip
+derives from data `RaceViewModel` already had.
+
+`UnwrappedTrackView` is explicitly a *race-distance* visualisation, not a
+geographical track map: a horizontal ribbon from START to FINISH, with each
+car placed left-to-right by race progress and stacked top-to-bottom by
+position. It renders purely from the `RaceState` it's given — it has no
+reference to `RaceEngine` or `RaceSimulator` at all, satisfying "the UI must
+not know about the simulator" by construction rather than by convention.
 
 - **Progress calculation is an isolated seam.** `CarState.trackProgress(raceState)`
   computes each car's horizontal position. Today it returns the *race's*
@@ -392,51 +440,51 @@ simulator" by construction rather than by convention.
   `BoxWithConstraints` measuring the actual available width at runtime
   (`maxWidth`), not a fixed dp value, so it adapts to different screen
   sizes.
-- **Leader is visually distinct** via `MaterialTheme.colorScheme.primary`
-  (not a team colour, per the ticket) on the position-1 marker only.
+- **Leader stands out via size, not just colour.** The position-1 marker is
+  rendered larger (`LEADER_MARKER_WIDTH`/`HEIGHT` vs `MARKER_WIDTH`/`HEIGHT`)
+  in addition to the existing `MaterialTheme.colorScheme.primary` background
+  — a colour-only difference doesn't read in greyscale or to anyone who
+  can't distinguish the two hues, a size difference always does.
+- **Content description per marker** (`"Position 1, VER"`) since the visual
+  marker conveys meaning (position + colour + size) that separate,
+  unlabelled `Text` nodes don't capture as one coherent announcement for a
+  screen reader.
 
-`RaceLeaderboard` is a `Column` of `LeaderboardRow`s
-(`feature/race/components/LeaderboardRow.kt`) sorted by `car.position`, each
-keyed by driver id so recomposition is stable. `LeaderboardRow` shows
-position, driver name, a small tyre-compound badge, and gap — the badge uses
-the standard F1 tyre-compound colour coding (red/yellow/white/green/blue),
-which is a universal motorsport convention, not a team colour, so it doesn't
-conflict with "no team colours yet." Both `RaceLeaderboard` and
-`UnwrappedTrackView` tolerate an empty `cars` list (`RaceState.empty()`,
-before any simulation has run) by showing a short "no active session"
-message instead of an empty card.
-
-`ReplayControls` (`feature/race/components/ReplayControls.kt`) is the LIVE
-RACE/REPLAY MODE banner plus Previous/Play-Pause/Next buttons. Like the
-other Race components, it takes only plain values and lambdas — no
-`RaceTimeline` reference — so `RaceViewModel` is the only place in the app
-that imports `RaceTimeline` at all. Unlike its APX-006 version, the buttons
-are always enabled rather than disabled at the two ends of recorded history:
-APX-008 simplified `RaceUiState` down to exactly the three fields the ticket
-specified (`raceState`, `insights`, `isReplayMode`), dropping
-`timelinePosition`/`timelineSize` — without them, boundary-disabling isn't
-derivable in the UI layer. This is safe because `RaceTimeline.previous()`/
-`next()` already clamp internally, so a boundary press is a harmless no-op;
-the only cost is a lost bit of polish (buttons that could visually grey out
-at the ends but don't).
+`RaceLeaderboard`/`LeaderboardRow` (`feature/race/components/LeaderboardRow.kt`)
+render Pos/Driver/Gap/Tyre in that order (per the ticket), each row keyed by
+driver id. The leader's row gets a tinted background
+(`primary.copy(alpha = 0.12f)`) and bold text, in addition to
+`UnwrappedTrackView`'s own leader emphasis — two independent, low-cost
+"leader stands out" treatments rather than one shared mechanism, since the
+two components don't share layout code. A `LeaderboardColumnHeader` row
+(POS/DRIVER/GAP/TYRE labels) sits above the rows, addressing "improve
+typography" by giving the numbers/names something to visually align against.
+The tyre-compound badge picks its text colour *per compound*
+(white on SOFT/WET/INTERMEDIATE's dark saturated backgrounds, black on
+MEDIUM/HARD's light ones) rather than one fixed colour, since a single
+choice can't have adequate contrast against both a dark red and a pale
+yellow circle — and carries a content description (e.g. "Medium tyres"),
+since the colour+letter combination alone conveys nothing to a screen
+reader. Both `RaceLeaderboard` and `UnwrappedTrackView` tolerate an empty
+`cars` list (`RaceState.empty()`, before any simulation has run) by showing
+a short "no active session" message instead of an empty card.
 
 `RaceIntelligenceSection` (`feature/race/components/RaceIntelligenceSection.kt`)
-shows the top 3 `RaceInsight`s as `RaceInsightCard`s
-(`insights.take(3)`, truncation is the UI's job, not the engine's —
-`RaceIntelligenceEngine` returns everything it found). `RaceInsightCard`
+renders the top 3 `RaceInsight`s as `RaceInsightCard`s separated by
+dividers — "a clean feed" — in the order `RaceIntelligenceEngine` already
+returns them (highest `InsightPriority` first; the ticket's "highest
+priority first" requirement was already satisfied by the engine itself, no
+detector logic changed). Truncation to 3 (`insights.take(3)`) stays the
+UI's job, not the engine's. `RaceInsightCard`
 (`feature/race/components/RaceInsightCard.kt`) shows an emoji keyed off
 `InsightType` (🔥 battle, 📉/📈 gap closing/increasing, ⚡ fastest car, 🎯
 DRS range, 🛞 tyre concern), the insight's title/description, and a small
 coloured dot for `InsightPriority` (error/primary/onSurfaceVariant for
 HIGH/MEDIUM/LOW — deliberately reusing already-themed colours rather than
-the unconfigured Material 3 default `tertiary`). Same pattern as every other
-Race component: plain data in, no reference to the engine or the ViewModel.
-
-`SectionHeader` (`feature/race/components/SectionHeader.kt`) is the one
-component reused *within* `feature/race` itself (as opposed to `ApexCard`,
-reused across features) — the same title styling backs the top LIVE
-RACE/REPLAY MODE banner (via a larger `style` override) and the "Race
-Intelligence"/"Leaderboard" section titles.
+the unconfigured Material 3 default `tertiary`), now also carrying a content
+description ("High priority", etc.) since colour alone isn't
+screen-reader-accessible. Same pattern as every other Race component: plain
+data in, no reference to the engine or the ViewModel.
 
 ## Icons
 
@@ -526,13 +574,18 @@ there is a real API client or entity would be dead code.
     than `onNodeWithText(...).assertExists()`, which throws if more than one
     node matches.
 - **Isolated Compose component tests** (`app/src/androidTest`) —
-  `UnwrappedTrackViewTest`, `ReplayControlsTest`, `RaceIntelligenceSectionTest`,
-  and `RaceLeaderboardTest` all use the lighter `createComposeRule()` (no
-  `MainActivity`, no Hilt) since every Race component takes plain parameters
-  and needs neither. Tests that need `RaceState`/`CarState`/`RaceInsight`
-  fixtures build them inline rather than reusing `RaceStateFactory`, because
-  that fixture lives in `app/src/test`, a different source set `androidTest`
-  cannot see.
+  `UnwrappedTrackViewTest`, `SessionHeaderTest`, `RaceStatusBarTest`,
+  `RaceIntelligenceSectionTest`, and `RaceLeaderboardTest` all use the
+  lighter `createComposeRule()` (no `MainActivity`, no Hilt) since every
+  Race component takes plain parameters and needs neither. Tests that need
+  `RaceState`/`CarState`/`RaceInsight` fixtures build them inline rather
+  than reusing `RaceStateFactory`, because that fixture lives in
+  `app/src/test`, a different source set `androidTest` cannot see. Since
+  "LIVE" can legitimately appear twice at once (the session header's status
+  word and the status bar's session chip), tests that touch the full
+  `RaceScreen`/`MainActivity` check presence by node count rather than
+  `onNodeWithText(...).assertExists()`, same pattern as the "Analysis"/
+  "Settings" bottom-nav collision above.
 - **Full-stack data test**: `RaceScreenTest` (`app/src/androidTest`) is the
   one test that actually proves "Race screen displays race data" rather than
   just "Race screen renders": it injects the real `RaceEngine` singleton via

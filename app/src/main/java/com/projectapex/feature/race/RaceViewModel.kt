@@ -18,7 +18,9 @@ import javax.inject.Inject
 data class RaceUiState(
     val raceState: RaceState = RaceState.empty(),
     val insights: List<RaceInsight> = emptyList(),
-    val isReplayMode: Boolean = false
+    val isReplayMode: Boolean = false,
+    val timelinePosition: Int = 0,
+    val timelineSize: Int = 0
 )
 
 /**
@@ -43,7 +45,9 @@ class RaceViewModel @Inject constructor(
         RaceUiState(
             raceState = timeline.currentSnapshot?.raceState ?: RaceState.empty(),
             insights = insights,
-            isReplayMode = !timeline.isLive
+            isReplayMode = !timeline.isLive,
+            timelinePosition = timeline.currentIndex,
+            timelineSize = timeline.snapshots.size
         )
     }.stateIn(
         scope = viewModelScope,

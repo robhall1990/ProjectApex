@@ -23,18 +23,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.projectapex.R
-import com.projectapex.core.ui.ApexCard
 import com.projectapex.domain.model.CarState
 import com.projectapex.domain.model.RaceState
 import kotlin.math.roundToInt
 
-private val ROW_HEIGHT = 48.dp
+private val ROW_HEIGHT = 56.dp
 private val MARKER_WIDTH = 48.dp
-private val MARKER_HEIGHT = 40.dp
+private val MARKER_HEIGHT = 44.dp
+private val LEADER_MARKER_WIDTH = 56.dp
+private val LEADER_MARKER_HEIGHT = 50.dp
 private const val ANIMATION_DURATION_MS = 600
 
 /**
@@ -51,7 +54,7 @@ fun UnwrappedTrackView(
     val cars = raceState.cars.sortedBy { it.position }
     val density = LocalDensity.current
 
-    ApexCard(modifier = modifier.fillMaxWidth()) {
+    SectionCard(title = stringResource(R.string.race_track_title), modifier = modifier) {
         Text(
             text = stringResource(R.string.race_track_start),
             style = MaterialTheme.typography.labelMedium
@@ -70,7 +73,7 @@ fun UnwrappedTrackView(
                     .fillMaxWidth()
                     .height(ROW_HEIGHT * cars.size)
             ) {
-                val trackWidthPx = with(density) { (maxWidth - MARKER_WIDTH).toPx() }
+                val trackWidthPx = with(density) { (maxWidth - LEADER_MARKER_WIDTH).toPx() }
                 val rowHeightPx = with(density) { ROW_HEIGHT.toPx() }
 
                 cars.forEachIndexed { index, car ->
@@ -139,13 +142,20 @@ private fun CarMarker(
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
+    // The leader gets a visibly larger marker (not just a colour change) so
+    // it reads as "stands out" even at a glance or in greyscale.
+    val markerWidth = if (isLeader) LEADER_MARKER_WIDTH else MARKER_WIDTH
+    val markerHeight = if (isLeader) LEADER_MARKER_HEIGHT else MARKER_HEIGHT
 
     Box(
         modifier = Modifier
             .offset { IntOffset(animatedX.roundToInt(), animatedY.roundToInt()) }
-            .size(width = MARKER_WIDTH, height = MARKER_HEIGHT)
+            .size(width = markerWidth, height = markerHeight)
             .clip(RoundedCornerShape(8.dp))
-            .background(backgroundColor),
+            .background(backgroundColor)
+            .semantics {
+                contentDescription = "Position ${car.position}, ${car.driver.id}"
+            },
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -158,6 +168,7 @@ private fun CarMarker(
             Text(
                 text = car.driver.id,
                 style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
                 color = contentColor
             )
         }

@@ -3,7 +3,6 @@ package com.projectapex
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -27,14 +26,15 @@ class ApexNavigationTest {
 
     @Test
     fun raceDashboardRendersAfterSplash() {
-        waitForNodesWithText("LIVE RACE")
-
-        composeRule.onNodeWithText("LIVE RACE").assertExists()
+        // "LIVE" can legitimately appear more than once (the session header's
+        // status word and the status bar's session chip both use it), so the
+        // wait itself - not a follow-up assertExists() - is the assertion.
+        waitForNodesWithText("LIVE")
     }
 
     @Test
     fun bottomNavigationSwitchesToAnalysisTab() {
-        waitForNodesWithText("LIVE RACE")
+        waitForNodesWithText("LIVE")
 
         // Before navigating, "Analysis" only appears once, as the nav bar label.
         composeRule.onAllNodesWithText("Analysis").onFirst().performClick()
@@ -45,7 +45,7 @@ class ApexNavigationTest {
 
     @Test
     fun bottomNavigationSwitchesToSettingsTab() {
-        waitForNodesWithText("LIVE RACE")
+        waitForNodesWithText("LIVE")
 
         composeRule.onAllNodesWithText("Settings").onFirst().performClick()
 

@@ -9,12 +9,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.projectapex.R
 import com.projectapex.feature.race.components.RaceIntelligenceSection
 import com.projectapex.feature.race.components.RaceLeaderboard
-import com.projectapex.feature.race.components.ReplayControls
+import com.projectapex.feature.race.components.RaceStatusBar
+import com.projectapex.feature.race.components.SessionHeader
 import com.projectapex.feature.race.components.UnwrappedTrackView
 
 @Composable
@@ -30,11 +33,21 @@ fun RaceScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        ReplayControls(
+        SessionHeader(
+            eventName = stringResource(R.string.race_session_event_name),
+            currentLap = uiState.raceState.currentLap,
+            totalLaps = uiState.raceState.totalLaps,
             isReplayMode = uiState.isReplayMode,
+            canGoPrevious = uiState.timelinePosition > 0,
+            canGoNext = uiState.timelinePosition < uiState.timelineSize - 1,
             onPreviousClick = viewModel::onPreviousClicked,
             onPlayPauseClick = viewModel::onPlayPauseClicked,
             onNextClick = viewModel::onNextClicked
+        )
+
+        RaceStatusBar(
+            raceState = uiState.raceState,
+            isReplayMode = uiState.isReplayMode
         )
 
         UnwrappedTrackView(raceState = uiState.raceState)

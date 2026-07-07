@@ -44,6 +44,7 @@ class UnwrappedTrackViewTest {
             }
         }
 
+        composeRule.onNodeWithText("Unwrapped Track").assertExists()
         composeRule.onNodeWithText("START").assertExists()
         composeRule.onNodeWithText("FINISH").assertExists()
     }

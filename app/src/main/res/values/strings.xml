@@ -1,22 +1,53 @@
 <resources>
     <string name="app_name">Project Apex</string>
 
+    <string name="race_session_event_name">British Grand Prix</string>
+    <string name="race_session_lap_label">Lap</string>
+
+    <string name="race_track_title">Unwrapped Track</string>
     <string name="race_track_start">START</string>
     <string name="race_track_finish">FINISH</string>
     <string name="race_track_no_session">No active session — start a simulation in Settings</string>
+
     <string name="race_leaderboard_title">Leaderboard</string>
+    <string name="race_leaderboard_column_position">POS</string>
+    <string name="race_leaderboard_column_driver">DRIVER</string>
+    <string name="race_leaderboard_column_gap">GAP</string>
+    <string name="race_leaderboard_column_tyre">TYRE</string>
     <string name="race_leaderboard_leader_gap">Leader</string>
     <string name="race_leaderboard_gap_format">+%.1fs</string>
 
-    <string name="race_mode_live">LIVE RACE</string>
-    <string name="race_mode_replay">REPLAY MODE</string>
+    <string name="race_mode_live">LIVE</string>
+    <string name="race_mode_replay">REPLAY</string>
     <string name="race_control_previous">&lt; Previous</string>
     <string name="race_control_next">Next &gt;</string>
     <string name="race_control_play">Play</string>
     <string name="race_control_pause">Pause</string>
 
+    <string name="race_status_title">Status</string>
+    <string name="race_status_session_label">Session</string>
+    <string name="race_status_simulation_label">Simulation</string>
+    <string name="race_status_simulation_running">Running</string>
+    <string name="race_status_simulation_stopped">Stopped</string>
+    <string name="race_status_replay_label">Replay</string>
+    <string name="race_status_replay_active">Active</string>
+    <string name="race_status_track_label">Track</string>
+    <string name="race_status_weather_label">Weather</string>
+    <string name="race_status_drs_label">DRS</string>
+    <string name="race_status_placeholder_value">—</string>
+
     <string name="race_intelligence_title">Race Intelligence</string>
     <string name="race_intelligence_no_insights">No insights yet</string>
+
+    <string name="tyre_compound_soft">Soft tyres</string>
+    <string name="tyre_compound_medium">Medium tyres</string>
+    <string name="tyre_compound_hard">Hard tyres</string>
+    <string name="tyre_compound_intermediate">Intermediate tyres</string>
+    <string name="tyre_compound_wet">Wet tyres</string>
+
+    <string name="insight_priority_high">High priority</string>
+    <string name="insight_priority_medium">Medium priority</string>
+    <string name="insight_priority_low">Low priority</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_developer_mode_title">Developer Mode</string>

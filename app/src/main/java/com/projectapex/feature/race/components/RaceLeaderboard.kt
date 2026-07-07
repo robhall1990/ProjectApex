@@ -1,7 +1,6 @@
 package com.projectapex.feature.race.components
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -12,12 +11,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.projectapex.R
-import com.projectapex.core.ui.ApexCard
 import com.projectapex.domain.model.RaceState
 
 /**
- * Position / Driver / Tyre / Gap standings, driven entirely by [raceState] -
+ * Position / Driver / Gap / Tyre standings, driven entirely by [raceState] -
  * no simulator dependency, no business logic beyond sorting by position.
+ * The leader's row is visually highlighted by [LeaderboardRow] itself.
  */
 @Composable
 fun RaceLeaderboard(
@@ -26,17 +25,16 @@ fun RaceLeaderboard(
 ) {
     val cars = raceState.cars.sortedBy { it.position }
 
-    ApexCard(modifier = modifier.fillMaxWidth()) {
-        SectionHeader(title = stringResource(R.string.race_leaderboard_title))
-
+    SectionCard(title = stringResource(R.string.race_leaderboard_title), modifier = modifier) {
         if (cars.isEmpty()) {
             Text(
                 text = stringResource(R.string.race_track_no_session),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 12.dp)
+                style = MaterialTheme.typography.bodyMedium
             )
         } else {
-            Column(modifier = Modifier.padding(top = 12.dp)) {
+            Column {
+                LeaderboardColumnHeader()
+                HorizontalDivider(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
                 cars.forEachIndexed { index, car ->
                     key(car.driver.id) {
                         LeaderboardRow(car = car)

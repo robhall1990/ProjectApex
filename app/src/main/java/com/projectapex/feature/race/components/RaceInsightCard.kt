@@ -15,8 +15,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.projectapex.R
 import com.projectapex.domain.intelligence.InsightPriority
 import com.projectapex.domain.intelligence.InsightType
 import com.projectapex.domain.intelligence.RaceInsight
@@ -82,10 +86,18 @@ private fun PriorityDot(priority: InsightPriority) {
         InsightPriority.MEDIUM -> MaterialTheme.colorScheme.primary
         InsightPriority.LOW -> MaterialTheme.colorScheme.onSurfaceVariant
     }
+    val description = stringResource(
+        when (priority) {
+            InsightPriority.HIGH -> R.string.insight_priority_high
+            InsightPriority.MEDIUM -> R.string.insight_priority_medium
+            InsightPriority.LOW -> R.string.insight_priority_low
+        }
+    )
     Box(
         modifier = Modifier
-            .size(8.dp)
+            .size(10.dp)
             .clip(CircleShape)
             .background(color)
+            .semantics { contentDescription = description }
     )
 }

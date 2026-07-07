@@ -59,6 +59,20 @@ class RaceLeaderboardTest {
     }
 
     @Test
+    fun displaysColumnHeaders() {
+        composeRule.setContent {
+            ProjectApexTheme {
+                RaceLeaderboard(raceState = sampleRaceState())
+            }
+        }
+
+        composeRule.onNodeWithText("POS").assertExists()
+        composeRule.onNodeWithText("DRIVER").assertExists()
+        composeRule.onNodeWithText("GAP").assertExists()
+        composeRule.onNodeWithText("TYRE").assertExists()
+    }
+
+    @Test
     fun showsAPlaceholderWhenThereAreNoCars() {
         composeRule.setContent {
             ProjectApexTheme {

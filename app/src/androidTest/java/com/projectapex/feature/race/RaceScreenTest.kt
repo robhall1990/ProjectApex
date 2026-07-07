@@ -12,6 +12,7 @@ import com.projectapex.domain.model.TyreCompound
 import com.projectapex.domain.race.RaceEngine
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -64,7 +65,10 @@ class RaceScreenTest {
             composeRule.onAllNodesWithText("Lando Norris").fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithText("LIVE RACE").assertExists()
+        // "LIVE" can legitimately appear more than once (the session header's
+        // status word and the status bar's session chip both use it), so we
+        // check presence by count rather than a single-match assertExists().
+        assertTrue(composeRule.onAllNodesWithText("LIVE").fetchSemanticsNodes().isNotEmpty())
         composeRule.onNodeWithText("Lando Norris").assertExists()
         composeRule.onNodeWithText("NOR").assertExists()
     }

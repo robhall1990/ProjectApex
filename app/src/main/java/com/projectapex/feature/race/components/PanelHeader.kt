@@ -9,11 +9,11 @@ import androidx.compose.ui.text.TextStyle
 
 /**
  * Consistent title styling reused across Race screen sections - the top
- * LIVE RACE/REPLAY MODE banner as well as the "Race Intelligence" and
- * "Leaderboard" section titles.
+ * session banner (via a larger [style] override) as well as the "Race
+ * Intelligence"/"Leaderboard"/"Unwrapped Track" section titles.
  */
 @Composable
-fun SectionHeader(
+fun PanelHeader(
     title: String,
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.titleMedium,
