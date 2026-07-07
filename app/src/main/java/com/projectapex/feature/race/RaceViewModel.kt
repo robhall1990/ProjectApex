@@ -1,28 +1,30 @@
 package com.projectapex.feature.race
 
 import androidx.lifecycle.ViewModel
-import com.projectapex.core.model.SessionState
+import androidx.lifecycle.viewModelScope
+import com.projectapex.domain.model.RaceState
+import com.projectapex.domain.race.RaceEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
 data class RaceUiState(
-    val session: SessionState = SessionState(),
-    val sessionType: String = "Race",
-    val sessionTime: String = "Sunday 14:00",
-    val upcomingCapabilities: List<String> = listOf(
-        "Live gaps",
-        "Strategy AI",
-        "Track visualisation",
-        "Race replay"
-    )
+    val raceState: RaceState = RaceState.empty()
 )
 
 @HiltViewModel
-class RaceViewModel @Inject constructor() : ViewModel() {
+class RaceViewModel @Inject constructor(
+    raceEngine: RaceEngine
+) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(RaceUiState())
-    val uiState: StateFlow<RaceUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<RaceUiState> = raceEngine.state
+        .map { raceState -> RaceUiState(raceState = raceState) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = RaceUiState()
+        )
 }

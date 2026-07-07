@@ -47,9 +47,10 @@ com.projectapex
 │                       updates for UI development, sits above RaceEngine
 ├── feature/
 │   ├── splash/
-│   ├── race/          Screen + ViewModel + NextSessionCard + RaceIntelligenceCard
+│   ├── race/          Screen + ViewModel, reading RaceEngine's state
+│   │   └── components/  UnwrappedTrackView, RaceLeaderboard
 │   ├── analysis/
-│   └── settings/
+│   └── settings/      Screen + ViewModel + DeveloperModeCard (drives RaceSimulator)
 ├── ApexApplication.kt
 └── MainActivity.kt
 ```
@@ -107,12 +108,13 @@ hold its own copy of race state or mutate it directly.
   `RaceEngine` doesn't care if that's a live timing feed, a replay file, or
   a test.
 - **`@Singleton @Inject constructor()`.** Hilt constructs and shares exactly
-  one `RaceEngine` app-wide — `RaceSimulator` and any future ViewModel that
-  reads race state all get the same instance. Both annotations are plain
-  `javax.inject`, so the file still has no Hilt/Android framework import of
-  its own. The Race dashboard still reads its own hardcoded `RaceUiState`,
-  though — wiring a ViewModel to actually read from `RaceEngine` is a future
-  ticket, not this one.
+  one `RaceEngine` app-wide — `RaceSimulator` and `RaceViewModel` get the
+  same instance. Both annotations are plain `javax.inject`, so the file
+  still has no Hilt/Android framework import of its own. `RaceViewModel`
+  (`feature/race/RaceViewModel.kt`) now maps `raceEngine.state` directly into
+  its `RaceUiState`, so the Race screen renders whatever `RaceEngine`
+  currently holds — starting/stopping the simulator in Settings is visible
+  on the Race tab in real time.
 - **Thread safety and observability are both free.** `MutableStateFlow`
   guarantees atomic value assignment and always replays its latest value to
   every collector, so no manual synchronization was needed to satisfy
@@ -214,11 +216,8 @@ tabs preserves each tab's own back stack/scroll position instead of
 rebuilding it, and repeated taps on the same tab don't stack duplicate
 destinations.
 
-Screens do not call `NavController` methods directly. `ENTER LIVE SESSION` on
-the Race dashboard is a deliberate no-op (`onClick = {}`) rather than a
-lambda parameter, because there is nowhere for it to navigate yet — it is a
-placeholder for a future live-session destination, not a wired callback with
-nothing behind it.
+Screens do not call `NavController` methods directly — navigation is always
+passed in as plain lambdas from `ApexMainScreen`/`ApexNavHost`.
 
 Splash removes itself from the back stack on navigating to Main
 (`popUpTo(Splash) { inclusive = true }`), so back-press from the Race tab
@@ -239,13 +238,50 @@ by a user's wallpaper.
 
 `core/ui/ApexCard` is the one genuinely cross-feature component so far: a
 `Card` wrapper providing the consistent rounded-corner, tonal-surface,
-padded-`Column` treatment used by every dashboard card. `NextSessionCard` and
-`RaceIntelligenceCard` build on top of it but stay in `feature/race`, because
-their content (event name, session status, capability checklist) is
-Race-specific — only the container styling is shared. If a future feature
-(e.g. Analysis) needs a visually similar but differently-populated card, it
-should compose `ApexCard` the same way rather than reusing a Race-specific
-card component.
+padded-`Column` treatment used by every dashboard card. `UnwrappedTrackView`
+and `RaceLeaderboard` (`feature/race/components/`) both build on top of it,
+but stay in `feature/race` since their content is Race-specific — only the
+container styling is shared. If a future feature needs a visually similar
+but differently-populated card, it should compose `ApexCard` the same way
+rather than reusing a Race-specific component.
+
+## Race visualisation
+
+`UnwrappedTrackView` (`feature/race/components/UnwrappedTrackView.kt`) is
+explicitly a *race-distance* visualisation, not a geographical track map: a
+horizontal ribbon from START to FINISH, with each car placed left-to-right by
+race progress and stacked top-to-bottom by position. It renders purely from
+the `RaceState` it's given — it has no reference to `RaceEngine` or
+`RaceSimulator` at all, satisfying "the UI must not know about the
+simulator" by construction rather than by convention.
+
+- **Progress calculation is an isolated seam.** `CarState.trackProgress(raceState)`
+  computes each car's horizontal position. Today it returns the *race's*
+  overall `currentLap / totalLaps` for every car alike, because `CarState`
+  has no per-car distance-around-lap field yet — that's why every car
+  currently sits at the same X position, differentiated only by row (Y).
+  The function takes the individual `CarState` as its receiver specifically
+  so that swapping in a real `distanceAroundLap` later touches only this one
+  function, not the view's layout or its callers.
+- **Animation via `animateFloatAsState`, not Canvas.** Each car marker
+  animates its own X/Y offset (in pixels, via `Modifier.offset { IntOffset(...) }`)
+  toward its current target position with a 600ms `tween`. `key(car.driver.id)`
+  around each marker gives Compose a stable identity across recompositions,
+  so when two cars swap places, `animateFloatAsState` interpolates from each
+  marker's *previous* position rather than snapping - no Canvas, no custom
+  `Layout`, no manual `Animatable` bookkeeping.
+- **No hardcoded coordinates.** The ribbon's pixel width comes from
+  `BoxWithConstraints` measuring the actual available width at runtime
+  (`maxWidth`), not a fixed dp value, so it adapts to different screen
+  sizes.
+- **Leader is visually distinct** via `MaterialTheme.colorScheme.primary`
+  (not a team colour, per the ticket) on the position-1 marker only.
+
+`RaceLeaderboard` is the plainer of the two: a `Column` of position/driver
+name/gap rows sorted by `car.position`, also keyed by driver id so its own
+recomposition is stable. Both components tolerate an empty `cars` list
+(`RaceState.empty()`, before any simulation has run) by showing a short
+"no active session" message instead of an empty card.
 
 ## Icons
 
@@ -283,8 +319,13 @@ there is a real API client or entity would be dead code.
 
 - **ViewModel unit tests** (`app/src/test`) — plain JUnit, no
   Android/Hilt/Compose dependency, run on the JVM. `RaceViewModelTest`
-  asserts the default `RaceUiState` (offline session, event name, capability
-  list) without touching Compose or Android at all.
+  constructs `RaceViewModel(RaceEngine())` directly (bypassing Hilt, same as
+  the domain tests below) and asserts `uiState` both starts at
+  `RaceState.empty()` and reflects a subsequent `RaceEngine.updateState()`
+  call — proving the reactive mapping actually works, not just its initial
+  value. Needs `Dispatchers.setMain(UnconfinedTestDispatcher())` in
+  `@Before`/`resetMain()` in `@After` since `viewModelScope` needs a `Main`
+  dispatcher that doesn't exist by default on the JVM.
 - **Domain unit tests** (`app/src/test`) — `RaceEngineTest` and
   `RaceSimulatorTest` construct `RaceEngine()`/`RaceSimulator(...)` directly,
   bypassing Hilt entirely (there's no Android context needed to build a pure
@@ -307,10 +348,25 @@ there is a real API client or entity would be dead code.
     body) via `onAllNodesWithText(...).fetchSemanticsNodes().size`, rather
     than `onNodeWithText(...).assertExists()`, which throws if more than one
     node matches.
+- **Isolated Compose component tests** (`app/src/androidTest`) —
+  `UnwrappedTrackViewTest` uses the lighter `createComposeRule()` (no
+  `MainActivity`, no Hilt) since `UnwrappedTrackView` takes a plain
+  `RaceState` parameter and needs neither. It builds `RaceState`/`CarState`
+  fixtures inline rather than reusing `RaceStateFactory`, because that
+  fixture lives in `app/src/test`, a different source set `androidTest`
+  cannot see.
+- **Full-stack data test**: `RaceScreenTest` (`app/src/androidTest`) is the
+  one test that actually proves "Race screen displays race data" rather than
+  just "Race screen renders": it injects the real `RaceEngine` singleton via
+  Hilt, calls `updateState()` on it directly (the same call `RaceSimulator`
+  makes), and asserts the driver name/abbreviation it just pushed in shows
+  up on screen — exercising the full `RaceEngine -> RaceViewModel ->
+  RaceScreen` chain with no fakes.
 
 New features should follow the same split: pure logic in a ViewModel test,
-end-to-end flow in a Compose navigation test — rather than trying to unit
-test Composables directly.
+Compose component tests for view logic that doesn't need a full Activity,
+end-to-end flow in a Compose navigation/data test — rather than trying to
+unit test Composables directly.
 
 ## Adding a new feature
 

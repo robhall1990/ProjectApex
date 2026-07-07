@@ -1,11 +1,13 @@
 <resources>
     <string name="app_name">Project Apex</string>
 
-    <string name="race_header_title">PROJECT APEX</string>
-    <string name="race_header_subtitle">The smartest way to watch Formula 1.</string>
-    <string name="race_enter_live_session">ENTER LIVE SESSION</string>
-    <string name="race_intelligence_title">Race Intelligence</string>
-    <string name="race_intelligence_no_active_session">No active session</string>
+    <string name="race_live_title">Live Race</string>
+    <string name="race_track_start">START</string>
+    <string name="race_track_finish">FINISH</string>
+    <string name="race_track_no_session">No active session — start a simulation in Settings</string>
+    <string name="race_leaderboard_title">Leaderboard</string>
+    <string name="race_leaderboard_leader_gap">Leader</string>
+    <string name="race_leaderboard_gap_format">+%.1fs</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_developer_mode_title">Developer Mode</string>

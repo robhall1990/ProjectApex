@@ -27,15 +27,14 @@ class ApexNavigationTest {
 
     @Test
     fun raceDashboardRendersAfterSplash() {
-        waitForNodesWithText("ENTER LIVE SESSION")
+        waitForNodesWithText("Live Race")
 
-        composeRule.onNodeWithText("PROJECT APEX").assertExists()
-        composeRule.onNodeWithText("British Grand Prix").assertExists()
+        composeRule.onNodeWithText("Live Race").assertExists()
     }
 
     @Test
     fun bottomNavigationSwitchesToAnalysisTab() {
-        waitForNodesWithText("ENTER LIVE SESSION")
+        waitForNodesWithText("Live Race")
 
         // Before navigating, "Analysis" only appears once, as the nav bar label.
         composeRule.onAllNodesWithText("Analysis").onFirst().performClick()
@@ -46,7 +45,7 @@ class ApexNavigationTest {
 
     @Test
     fun bottomNavigationSwitchesToSettingsTab() {
-        waitForNodesWithText("ENTER LIVE SESSION")
+        waitForNodesWithText("Live Race")
 
         composeRule.onAllNodesWithText("Settings").onFirst().performClick()
 

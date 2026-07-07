@@ -1,24 +1,52 @@
 package com.projectapex.feature.race
 
-import com.projectapex.core.model.SessionStatus
+import com.projectapex.domain.model.RaceState
+import com.projectapex.domain.race.RaceEngine
+import com.projectapex.domain.race.RaceStateFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class RaceViewModelTest {
 
+    private val mainDispatcher = UnconfinedTestDispatcher()
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(mainDispatcher)
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
     @Test
-    fun `initial state reflects an offline placeholder session`() {
-        val viewModel = RaceViewModel()
+    fun `uiState reflects RaceEngine's current and updated state`() = runTest(mainDispatcher) {
+        val engine = RaceEngine()
+        val viewModel = RaceViewModel(engine)
+        val emissions = mutableListOf<RaceState>()
 
-        val state = viewModel.uiState.value
+        val job = launch {
+            viewModel.uiState.collect { emissions.add(it.raceState) }
+        }
 
-        assertEquals(SessionStatus.OFFLINE, state.session.status)
-        assertEquals("British Grand Prix", state.session.eventName)
-        assertEquals("Race", state.sessionType)
-        assertEquals("Sunday 14:00", state.sessionTime)
-        assertEquals(
-            listOf("Live gaps", "Strategy AI", "Track visualisation", "Race replay"),
-            state.upcomingCapabilities
-        )
+        val newState = RaceStateFactory.fiveCarField()
+        engine.updateState(newState)
+
+        assertEquals(2, emissions.size)
+        assertEquals(RaceState.empty(), emissions[0])
+        assertEquals(newState, emissions[1])
+
+        job.cancel()
     }
 }

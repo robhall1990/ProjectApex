@@ -3,11 +3,12 @@
 The smartest way to watch Formula 1.
 
 Project Apex is a native Android client for live F1 timing, circuit visualisation,
-and race analysis. This repository currently contains the production foundation
-and the first real dashboard shell — architecture, navigation, theming, and the
-Apex Command Centre (Race, Analysis, Settings). No business logic (live timing,
-replay, strategy insights, etc.) has been implemented yet; all session data on
-screen is static placeholder state.
+and race analysis. This repository currently contains the production foundation,
+the bottom-nav app shell, a pure-Kotlin race domain model (`RaceEngine`), a
+development-only race simulator, and the first signature visual: an "unwrapped
+track" race-distance ribbon plus a leaderboard, both rendered live from
+`RaceEngine`. There is still no real data source — everything on screen today
+comes from the Developer Mode simulator, not a live timing feed.
 
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
@@ -77,7 +78,8 @@ com.projectapex
 │                       for UI development (dev-only, not production data)
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
-│   ├── race/          Apex Command Centre dashboard (Screen + ViewModel + cards)
+│   ├── race/          Screen + ViewModel, reading RaceEngine's state live
+│   │   └── components/  UnwrappedTrackView (race-distance ribbon), RaceLeaderboard
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
 │   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
 ├── ApexApplication.kt Hilt application entry point
@@ -88,20 +90,21 @@ com.projectapex
 `StateFlow`), and `RaceSimulator` (a development-only tool that generates
 believable fake race updates once a second and pushes them into
 `RaceEngine`) — all pure Kotlin, no Android or networking dependencies. The
-Race dashboard is not yet wired to read from `RaceEngine`; only Settings'
-Developer Mode controls talk to the simulator so far. `data/` is still
-absent: it will be introduced when a real data source (e.g. a live timing
-feed) exists to push updates into `RaceEngine`.
+Race screen reads `RaceEngine` live via `RaceViewModel`; it has no idea the
+simulator exists. `data/` is still absent: it will be introduced when a real
+data source (e.g. a live timing feed) exists to push updates into
+`RaceEngine`.
 
 ## Current screens
 
 - **Splash** — brief branded loading screen, auto-navigates into the main shell.
 - **Main shell** — a `Scaffold` with a bottom navigation bar (Race / Analysis /
   Settings) wrapping a nested `NavHost`. Race is the default tab.
-- **Race** ("Apex Command Centre") — the header ("PROJECT APEX" + tagline), a
-  Next Session card (event, session type, time, status — static placeholder
-  data), an "ENTER LIVE SESSION" button (currently a no-op), and a Race
-  Intelligence card listing upcoming capabilities.
+- **Race** ("Live Race") — an unwrapped-track ribbon (`UnwrappedTrackView`)
+  showing each car's race-distance progress and position, plus a leaderboard
+  (`RaceLeaderboard`) with position/driver/gap. Both render directly from
+  `RaceEngine`'s current `RaceState` — empty and showing a "no active
+  session" message until Developer Mode is started.
 - **Analysis** — placeholder tab for future session analysis tooling.
 - **Settings** — placeholder tab for user preferences, plus a **Developer
   Mode** card (see below).
@@ -112,7 +115,7 @@ Settings has a "Developer Mode" card with **Start Simulated Race** / **Stop
 Simulation** buttons and a status line. Starting it seeds a 20-car field
 (VER, NOR, PIA, LEC, HAM, RUS + 14 placeholders) into `RaceEngine` and
 advances it once a second — gaps drift, tyres age, laps tick over, and cars
-occasionally swap adjacent positions. This is entirely fake data for
-exercising the app during development; it is not visible anywhere in the
-Race dashboard yet, since that screen doesn't read from `RaceEngine` yet
-either.
+occasionally swap adjacent positions. Switch to the Race tab while it's
+running to watch the track ribbon and leaderboard animate live. This is
+entirely fake data for exercising the app during development, not a
+real session.
