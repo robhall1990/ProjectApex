@@ -1,6 +1,6 @@
 package com.projectapex.core.di
 
-import com.projectapex.domain.simulation.SimulationDispatcher
+import com.projectapex.domain.DefaultDispatcher
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -19,6 +19,6 @@ import kotlinx.coroutines.Dispatchers
 object DomainModule {
 
     @Provides
-    @SimulationDispatcher
-    fun provideSimulationDispatcher(): CoroutineDispatcher = Dispatchers.Default
+    @DefaultDispatcher
+    fun provideDefaultDispatcher(): CoroutineDispatcher = Dispatchers.Default
 }

@@ -40,15 +40,18 @@ com.projectapex
 │   └── di/            Hilt modules for domain types that can't be constructor-
 │                       injected directly (e.g. a qualified CoroutineDispatcher)
 ├── domain/
+│   ├── DefaultDispatcher.kt  Qualifier for the shared background CoroutineDispatcher
 │   ├── model/         Driver, TyreCompound, CarState, RaceState — pure Kotlin,
 │   │                   no Android imports
 │   ├── race/          RaceEngine — owns the current RaceState
-│   └── simulation/    RaceSimulator — generates believable fake RaceState
-│                       updates for UI development, sits above RaceEngine
+│   ├── simulation/    RaceSimulator — generates believable fake RaceState
+│   │                   updates for UI development, sits above RaceEngine
+│   └── timeline/      RaceTimeline — records RaceState history, lets the UI
+│                       browse it independently of RaceEngine's live state
 ├── feature/
 │   ├── splash/
-│   ├── race/          Screen + ViewModel, reading RaceEngine's state
-│   │   └── components/  UnwrappedTrackView, RaceLeaderboard
+│   ├── race/          Screen + ViewModel, reading RaceTimeline's state
+│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls
 │   ├── analysis/
 │   └── settings/      Screen + ViewModel + DeveloperModeCard (drives RaceSimulator)
 ├── ApexApplication.kt
@@ -90,7 +93,7 @@ interface.
 Project Apex's eventual shape is:
 
 ```
-External Data Source -> RaceEngine -> Android UI
+External Data Source -> RaceEngine -> RaceTimeline -> Android UI
                               |
                               +------> AI Insight Engine (future)
 ```
@@ -108,13 +111,11 @@ hold its own copy of race state or mutate it directly.
   `RaceEngine` doesn't care if that's a live timing feed, a replay file, or
   a test.
 - **`@Singleton @Inject constructor()`.** Hilt constructs and shares exactly
-  one `RaceEngine` app-wide — `RaceSimulator` and `RaceViewModel` get the
+  one `RaceEngine` app-wide — `RaceSimulator` and `RaceTimeline` both get the
   same instance. Both annotations are plain `javax.inject`, so the file
   still has no Hilt/Android framework import of its own. `RaceViewModel`
-  (`feature/race/RaceViewModel.kt`) now maps `raceEngine.state` directly into
-  its `RaceUiState`, so the Race screen renders whatever `RaceEngine`
-  currently holds — starting/stopping the simulator in Settings is visible
-  on the Race tab in real time.
+  no longer reads `RaceEngine` directly (see [RaceTimeline](#racetimeline)) —
+  it reads `RaceTimeline`, which sits between the two.
 - **Thread safety and observability are both free.** `MutableStateFlow`
   guarantees atomic value assignment and always replays its latest value to
   every collector, so no manual synchronization was needed to satisfy
@@ -155,16 +156,18 @@ directly except `SettingsViewModel`; every other screen only ever reads
 
 Design notes:
 
-- **`@Singleton @Inject constructor(RaceEngine, @SimulationDispatcher CoroutineDispatcher)`.**
+- **`@Singleton @Inject constructor(RaceEngine, @DefaultDispatcher CoroutineDispatcher)`.**
   The dispatcher is injected, not hardcoded to `Dispatchers.Default`,
   specifically so `RaceSimulatorTest` can substitute a `StandardTestDispatcher`
   bound to the test's `TestCoroutineScheduler` — that makes the real
   `delay(1_000)` in the tick loop advance under virtual time
   (`advanceTimeBy`/`runCurrent`) instead of costing a real second per test.
-  `@SimulationDispatcher` is a plain `javax.inject.Qualifier` annotation
-  living in `domain/simulation/`; the actual `@Provides` binding
-  (`core/di/DomainModule.kt`) lives outside `domain/`, since a Hilt `@Module`
-  necessarily imports `dagger.hilt.*`.
+  `@DefaultDispatcher` is a plain `javax.inject.Qualifier` annotation living
+  at `domain/DefaultDispatcher.kt` (originally `@SimulationDispatcher`,
+  scoped to `domain/simulation/` — renamed and moved up once `RaceTimeline`
+  became a second consumer needing the exact same binding); the actual
+  `@Provides` (`core/di/DomainModule.kt`) lives outside `domain/`, since a
+  Hilt `@Module` necessarily imports `dagger.hilt.*`.
 - **No interface**, for the same reason as `RaceEngine` — one implementation,
   tests exercise the real thing.
 - **Own `CoroutineScope`.** `RaceSimulator` creates
@@ -177,6 +180,57 @@ Design notes:
   14 placeholders) and is `internal`, only usable by `RaceSimulator` itself.
   The UI never sees or constructs fake cars directly; it only ever reads
   whatever `RaceEngine.state` currently holds.
+
+### RaceTimeline
+
+```
+RaceSimulator -> RaceEngine -> RaceTimeline -> UI
+```
+
+`RaceTimeline` (`domain/timeline/RaceTimeline.kt`) records every `RaceState`
+`RaceEngine` ever holds and lets the UI browse that history independently of
+what the engine is currently doing — the enabler for replay, historical
+analysis, and future AI explanations that read past states, not just the
+current one. `RaceViewModel` now depends on `RaceTimeline` instead of
+`RaceEngine` directly; nothing in `feature/` imports `RaceEngine` anymore.
+
+- **Auto-recording, not a manually-fed buffer.** `RaceTimeline`'s `init`
+  block launches its own subscription to `raceEngine.state` and calls
+  `record()` on every emission itself. Nothing external needs to remember to
+  forward states — this mirrors how `RaceSimulator` is the *only* thing that
+  calls `RaceEngine.updateState()`; here, `RaceTimeline` is the only thing
+  that (normally) calls its own `record()`.
+- **"Live" vs "replay" is derived, not a stored flag.**
+  `RaceTimelineState.isLive` is just `currentIndex == snapshots.lastIndex`.
+  `record()` only re-pins `currentIndex` to the new latest snapshot *if the
+  timeline was already live* before this recording; if the caller had
+  stepped backwards (`previous()`/`seek()`), new recordings keep arriving in
+  the background without dragging their view forward. This is the same
+  mental model as a live-TV DVR: pause/rewind, and the broadcast keeps
+  recording behind you. Falling out of this: calling `next()` enough times
+  to reach the newest snapshot naturally re-enters live mode with no special
+  casing required.
+- **The 1000-snapshot cap shifts a paused viewer's index, it doesn't just
+  truncate blindly.** When recording drops old snapshots off the front,
+  a `currentIndex` that was pointing into the *middle* of the list (replay
+  mode) is shifted back by however many were dropped, then clamped — so the
+  viewer keeps looking at the same logical snapshot (or the oldest
+  surviving one, if theirs was evicted) rather than silently jumping to a
+  different point in history.
+- **No new RaceTimeline API for Play/Pause.** The ticket's function list is
+  fixed to `record`/`previous`/`next`/`seek`/`clear` — there's no dedicated
+  "pause" or "resume live" call. `RaceViewModel.onPlayPauseClicked()` maps
+  onto this fixed surface: while live, it calls `previous()` (the only
+  available way to leave live mode); while replaying, it calls
+  `seek(lastIndex)` (jump back to live). This is a deliberate simplification,
+  not a hidden extra timeline feature — see Limitations below.
+- **Tests call `record()` directly**, bypassing the `RaceEngine`
+  auto-subscription entirely, by constructing `RaceTimeline` with a
+  `StandardTestDispatcher()` whose scheduler is never advanced — so the
+  `init`-block subscription simply never runs, and only the test's own
+  direct calls affect timeline state. No `runTest`/coroutine machinery is
+  needed at all for `RaceTimelineTest`, since `record`/`previous`/`next`/
+  `seek`/`clear` are all plain, non-suspending functions.
 
 ## State management
 
@@ -283,6 +337,15 @@ recomposition is stable. Both components tolerate an empty `cars` list
 (`RaceState.empty()`, before any simulation has run) by showing a short
 "no active session" message instead of an empty card.
 
+`ReplayControls` (`feature/race/components/ReplayControls.kt`) is the LIVE
+MODE/REPLAY MODE indicator plus Previous/Play-Pause/Next buttons. Like the
+other Race components, it takes only plain values and lambdas — no
+`RaceTimeline` reference — so `RaceViewModel` is the only place in the app
+that imports `RaceTimeline` at all. Previous/Next are disabled at the two
+ends of the recorded history (`timelinePosition == 0` /
+`timelinePosition == timelineSize - 1`) rather than being no-ops, so the UI
+never suggests an action that wouldn't do anything.
+
 ## Icons
 
 `material-icons-core` (the default Compose Material dependency) only bundles
@@ -301,14 +364,16 @@ Hilt is wired at these points:
 - `MainActivity` — `@AndroidEntryPoint`.
 - Every ViewModel — `@HiltViewModel`, obtained in Compose via
   `hiltViewModel()`.
-- `RaceEngine` and `RaceSimulator` — `@Singleton @Inject constructor(...)`,
-  constructor-injected directly (no `@Module` needed for either class
-  itself — Hilt/Dagger discovers `@Inject` constructors automatically).
+- `RaceEngine`, `RaceSimulator`, and `RaceTimeline` — all
+  `@Singleton @Inject constructor(...)`, constructor-injected directly (no
+  `@Module` needed for any of them — Hilt/Dagger discovers `@Inject`
+  constructors automatically).
 - `core/di/DomainModule.kt` — the one Hilt `@Module` in the project so far,
   `@InstallIn(SingletonComponent::class)`, providing the one thing that
-  *can't* be constructor-injected: a `@SimulationDispatcher`-qualified
+  *can't* be constructor-injected: a `@DefaultDispatcher`-qualified
   `CoroutineDispatcher` (`Dispatchers.Default`), since `CoroutineDispatcher`
-  has no injectable constructor of its own.
+  has no injectable constructor of its own. Both `RaceSimulator` and
+  `RaceTimeline` depend on this same binding.
 
 Retrofit, OkHttp, Room, and Coil are present as Gradle dependencies for
 future networking and persistence work, but are deliberately not wired into
@@ -319,20 +384,27 @@ there is a real API client or entity would be dead code.
 
 - **ViewModel unit tests** (`app/src/test`) — plain JUnit, no
   Android/Hilt/Compose dependency, run on the JVM. `RaceViewModelTest`
-  constructs `RaceViewModel(RaceEngine())` directly (bypassing Hilt, same as
-  the domain tests below) and asserts `uiState` both starts at
-  `RaceState.empty()` and reflects a subsequent `RaceEngine.updateState()`
-  call — proving the reactive mapping actually works, not just its initial
-  value. Needs `Dispatchers.setMain(UnconfinedTestDispatcher())` in
+  constructs `RaceViewModel(RaceTimeline(RaceEngine(), StandardTestDispatcher()))`
+  directly (bypassing Hilt, same as the domain tests below), records two
+  snapshots via the timeline, and asserts `uiState` reflects the latest one
+  live, then flips `isLiveMode` to false after `previous()` — proving the
+  reactive mapping through `RaceTimeline` actually works, not just its
+  initial value. Needs `Dispatchers.setMain(UnconfinedTestDispatcher())` in
   `@Before`/`resetMain()` in `@After` since `viewModelScope` needs a `Main`
   dispatcher that doesn't exist by default on the JVM.
-- **Domain unit tests** (`app/src/test`) — `RaceEngineTest` and
-  `RaceSimulatorTest` construct `RaceEngine()`/`RaceSimulator(...)` directly,
-  bypassing Hilt entirely (there's no Android context needed to build a pure
-  Kotlin class). `RaceSimulatorTest` passes a `StandardTestDispatcher(testScheduler)`
-  in place of the Hilt-provided `Dispatchers.Default`, so `advanceTimeBy()`
-  fast-forwards the simulator's real `delay(1_000)` tick loop under virtual
-  time instead of the test actually waiting on a wall clock.
+- **Domain unit tests** (`app/src/test`) — `RaceEngineTest`, `RaceSimulatorTest`,
+  and `RaceTimelineTest` construct `RaceEngine()`/`RaceSimulator(...)`/
+  `RaceTimeline(...)` directly, bypassing Hilt entirely (there's no Android
+  context needed to build a pure Kotlin class). `RaceSimulatorTest` passes a
+  `StandardTestDispatcher(testScheduler)` in place of the Hilt-provided
+  `Dispatchers.Default`, so `advanceTimeBy()` fast-forwards the simulator's
+  real `delay(1_000)` tick loop under virtual time instead of the test
+  actually waiting on a wall clock. `RaceTimelineTest` passes a bare
+  `StandardTestDispatcher()` too, but for a different reason: since it's
+  never advanced, `RaceTimeline`'s `init`-block auto-subscription to
+  `RaceEngine` simply never runs, so every test can call `record()` directly
+  and reason about it in isolation, with no coroutine test machinery
+  (`runTest`, etc.) needed at all.
 - **Compose UI / navigation tests** (`app/src/androidTest`) — use
   `createAndroidComposeRule<MainActivity>()` plus `HiltAndroidRule` for
   screens wired through Hilt, and a custom `HiltTestRunner`
@@ -349,19 +421,22 @@ there is a real API client or entity would be dead code.
     than `onNodeWithText(...).assertExists()`, which throws if more than one
     node matches.
 - **Isolated Compose component tests** (`app/src/androidTest`) —
-  `UnwrappedTrackViewTest` uses the lighter `createComposeRule()` (no
-  `MainActivity`, no Hilt) since `UnwrappedTrackView` takes a plain
-  `RaceState` parameter and needs neither. It builds `RaceState`/`CarState`
-  fixtures inline rather than reusing `RaceStateFactory`, because that
-  fixture lives in `app/src/test`, a different source set `androidTest`
-  cannot see.
+  `UnwrappedTrackViewTest` and `ReplayControlsTest` both use the lighter
+  `createComposeRule()` (no `MainActivity`, no Hilt) since both components
+  take plain parameters and need neither. `UnwrappedTrackViewTest` builds
+  `RaceState`/`CarState` fixtures inline rather than reusing
+  `RaceStateFactory`, because that fixture lives in `app/src/test`, a
+  different source set `androidTest` cannot see.
 - **Full-stack data test**: `RaceScreenTest` (`app/src/androidTest`) is the
   one test that actually proves "Race screen displays race data" rather than
   just "Race screen renders": it injects the real `RaceEngine` singleton via
   Hilt, calls `updateState()` on it directly (the same call `RaceSimulator`
   makes), and asserts the driver name/abbreviation it just pushed in shows
-  up on screen — exercising the full `RaceEngine -> RaceViewModel ->
-  RaceScreen` chain with no fakes.
+  up on screen — exercising the full `RaceEngine -> RaceTimeline ->
+  RaceViewModel -> RaceScreen` chain with no fakes. Unlike the unit tests,
+  this uses the real Hilt-provided `Dispatchers.Default`, so `RaceTimeline`'s
+  auto-subscription genuinely runs in the background; the test's
+  `waitUntil(...)` polling accounts for that small real (not virtual) delay.
 
 New features should follow the same split: pure logic in a ViewModel test,
 Compose component tests for view logic that doesn't need a full Activity,

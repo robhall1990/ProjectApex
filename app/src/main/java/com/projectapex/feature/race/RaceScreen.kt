@@ -17,6 +17,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.projectapex.R
 import com.projectapex.feature.race.components.RaceLeaderboard
+import com.projectapex.feature.race.components.ReplayControls
 import com.projectapex.feature.race.components.UnwrappedTrackView
 
 @Composable
@@ -35,6 +36,15 @@ fun RaceScreen(
         Text(
             text = stringResource(R.string.race_live_title),
             style = MaterialTheme.typography.headlineMedium
+        )
+
+        ReplayControls(
+            isLiveMode = uiState.isLiveMode,
+            timelinePosition = uiState.timelinePosition,
+            timelineSize = uiState.timelineSize,
+            onPreviousClick = viewModel::onPreviousClicked,
+            onPlayPauseClick = viewModel::onPlayPauseClicked,
+            onNextClick = viewModel::onNextClicked
         )
 
         UnwrappedTrackView(raceState = uiState.raceState)

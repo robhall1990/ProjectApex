@@ -9,6 +9,13 @@
     <string name="race_leaderboard_leader_gap">Leader</string>
     <string name="race_leaderboard_gap_format">+%.1fs</string>
 
+    <string name="race_mode_live">LIVE MODE</string>
+    <string name="race_mode_replay">REPLAY MODE</string>
+    <string name="race_control_previous">&lt; Previous</string>
+    <string name="race_control_next">Next &gt;</string>
+    <string name="race_control_play">Play</string>
+    <string name="race_control_pause">Pause</string>
+
     <string name="settings_title">Settings</string>
     <string name="settings_developer_mode_title">Developer Mode</string>
     <string name="settings_simulation_status_running">Simulation running</string>

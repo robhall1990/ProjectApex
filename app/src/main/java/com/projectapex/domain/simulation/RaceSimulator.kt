@@ -1,5 +1,6 @@
 package com.projectapex.domain.simulation
 
+import com.projectapex.domain.DefaultDispatcher
 import com.projectapex.domain.model.CarState
 import com.projectapex.domain.model.RaceState
 import com.projectapex.domain.race.RaceEngine
@@ -34,7 +35,7 @@ import kotlin.random.Random
 @Singleton
 class RaceSimulator @Inject constructor(
     private val raceEngine: RaceEngine,
-    @SimulationDispatcher private val dispatcher: CoroutineDispatcher
+    @DefaultDispatcher private val dispatcher: CoroutineDispatcher
 ) {
 
     private val simulatorScope = CoroutineScope(SupervisorJob() + dispatcher)

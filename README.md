@@ -5,10 +5,11 @@ The smartest way to watch Formula 1.
 Project Apex is a native Android client for live F1 timing, circuit visualisation,
 and race analysis. This repository currently contains the production foundation,
 the bottom-nav app shell, a pure-Kotlin race domain model (`RaceEngine`), a
-development-only race simulator, and the first signature visual: an "unwrapped
-track" race-distance ribbon plus a leaderboard, both rendered live from
-`RaceEngine`. There is still no real data source — everything on screen today
-comes from the Developer Mode simulator, not a live timing feed.
+development-only race simulator, the signature "unwrapped track" race-distance
+ribbon and leaderboard, and a replay timeline (`RaceTimeline`) that records
+race history and lets the UI scrub through it independently of the live state.
+There is still no real data source — everything on screen today comes from
+the Developer Mode simulator, not a live timing feed.
 
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
@@ -72,39 +73,45 @@ com.projectapex
 │   ├── ui/            Reusable Compose components (e.g. ApexCard)
 │   └── navigation/    Top-level NavHost, bottom-nav shell, route definitions
 ├── domain/
+│   ├── DefaultDispatcher.kt  Shared background-dispatcher qualifier
 │   ├── model/         Race domain models (Driver, CarState, RaceState, ...) — pure Kotlin
 │   ├── race/          RaceEngine — owns the current RaceState as a StateFlow
-│   └── simulation/    RaceSimulator — generates believable fake race updates
-│                       for UI development (dev-only, not production data)
+│   ├── simulation/    RaceSimulator — generates believable fake race updates
+│   │                   for UI development (dev-only, not production data)
+│   └── timeline/      RaceTimeline — records RaceState history; previous/next/seek
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
-│   ├── race/          Screen + ViewModel, reading RaceEngine's state live
-│   │   └── components/  UnwrappedTrackView (race-distance ribbon), RaceLeaderboard
+│   ├── race/          Screen + ViewModel, reading RaceTimeline's state live
+│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
 │   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
 ├── ApexApplication.kt Hilt application entry point
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
 ```
 
-`domain/` holds the race data model, `RaceEngine` (owns race state as a
-`StateFlow`), and `RaceSimulator` (a development-only tool that generates
-believable fake race updates once a second and pushes them into
-`RaceEngine`) — all pure Kotlin, no Android or networking dependencies. The
-Race screen reads `RaceEngine` live via `RaceViewModel`; it has no idea the
-simulator exists. `data/` is still absent: it will be introduced when a real
-data source (e.g. a live timing feed) exists to push updates into
-`RaceEngine`.
+`domain/` holds the race data model, `RaceEngine` (owns the current race
+state as a `StateFlow`), `RaceSimulator` (a development-only tool that
+generates believable fake race updates once a second), and `RaceTimeline`
+(records every state `RaceEngine` ever holds, capped at 1000 snapshots, and
+lets the UI browse that history via previous/next/seek independently of
+whatever's currently live) — all pure Kotlin, no Android or networking
+dependencies. The Race screen reads `RaceTimeline` via `RaceViewModel`; it
+has no idea `RaceEngine` or the simulator exist. `data/` is still absent: it
+will be introduced when a real data source (e.g. a live timing feed) exists
+to push updates into `RaceEngine`.
 
 ## Current screens
 
 - **Splash** — brief branded loading screen, auto-navigates into the main shell.
 - **Main shell** — a `Scaffold` with a bottom navigation bar (Race / Analysis /
   Settings) wrapping a nested `NavHost`. Race is the default tab.
-- **Race** ("Live Race") — an unwrapped-track ribbon (`UnwrappedTrackView`)
-  showing each car's race-distance progress and position, plus a leaderboard
-  (`RaceLeaderboard`) with position/driver/gap. Both render directly from
-  `RaceEngine`'s current `RaceState` — empty and showing a "no active
-  session" message until Developer Mode is started.
+- **Race** ("Live Race") — a LIVE MODE/REPLAY MODE indicator with
+  Previous/Play-Pause/Next controls (`ReplayControls`), an unwrapped-track
+  ribbon (`UnwrappedTrackView`) showing each car's race-distance progress and
+  position, and a leaderboard (`RaceLeaderboard`) with position/driver/gap.
+  All three render from whatever `RaceTimeline` is currently pointed at —
+  empty and showing a "no active session" message until Developer Mode is
+  started.
 - **Analysis** — placeholder tab for future session analysis tooling.
 - **Settings** — placeholder tab for user preferences, plus a **Developer
   Mode** card (see below).
@@ -116,6 +123,7 @@ Simulation** buttons and a status line. Starting it seeds a 20-car field
 (VER, NOR, PIA, LEC, HAM, RUS + 14 placeholders) into `RaceEngine` and
 advances it once a second — gaps drift, tyres age, laps tick over, and cars
 occasionally swap adjacent positions. Switch to the Race tab while it's
-running to watch the track ribbon and leaderboard animate live. This is
-entirely fake data for exercising the app during development, not a
-real session.
+running to watch the track ribbon and leaderboard animate live, or tap
+"< Previous" to drop into REPLAY MODE and scrub back through the last
+1000 recorded snapshots. This is entirely fake data for exercising the app
+during development, not a real session.
