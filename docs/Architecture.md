@@ -46,12 +46,18 @@ com.projectapex
 │   ├── race/          RaceEngine — owns the current RaceState
 │   ├── simulation/    RaceSimulator — generates believable fake RaceState
 │   │                   updates for UI development, sits above RaceEngine
-│   └── timeline/      RaceTimeline — records RaceState history, lets the UI
-│                       browse it independently of RaceEngine's live state
+│   ├── timeline/      RaceTimeline — records RaceState history, lets the UI
+│   │                   browse it independently of RaceEngine's live state
+│   └── intelligence/  RaceIntelligenceEngine — deterministic rules over
+│                       RaceState producing RaceInsight (battles, gap trends,
+│                       tyre concerns, ...); no AI, no external calls
 ├── feature/
 │   ├── splash/
-│   ├── race/          Screen + ViewModel, reading RaceTimeline's state
-│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls
+│   ├── race/          Screen + 2 ViewModels (RaceViewModel reads
+│   │   │               RaceTimeline; RaceIntelligenceViewModel reads
+│   │   │               RaceEngine directly - see Domain layer)
+│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls,
+│   │                     RaceIntelligenceSection
 │   ├── analysis/
 │   └── settings/      Screen + ViewModel + DeveloperModeCard (drives RaceSimulator)
 ├── ApexApplication.kt
@@ -191,8 +197,9 @@ RaceSimulator -> RaceEngine -> RaceTimeline -> UI
 `RaceEngine` ever holds and lets the UI browse that history independently of
 what the engine is currently doing — the enabler for replay, historical
 analysis, and future AI explanations that read past states, not just the
-current one. `RaceViewModel` now depends on `RaceTimeline` instead of
-`RaceEngine` directly; nothing in `feature/` imports `RaceEngine` anymore.
+current one. `RaceViewModel` depends on `RaceTimeline` instead of
+`RaceEngine` directly. (`RaceIntelligenceViewModel` is the one exception —
+see [RaceIntelligenceEngine](#raceintelligenceengine) below for why.)
 
 - **Auto-recording, not a manually-fed buffer.** `RaceTimeline`'s `init`
   block launches its own subscription to `raceEngine.state` and calls
@@ -231,6 +238,58 @@ current one. `RaceViewModel` now depends on `RaceTimeline` instead of
   direct calls affect timeline state. No `runTest`/coroutine machinery is
   needed at all for `RaceTimelineTest`, since `record`/`previous`/`next`/
   `seek`/`clear` are all plain, non-suspending functions.
+
+### RaceIntelligenceEngine
+
+```
+RaceState -> RaceIntelligenceEngine -> RaceInsight list -> Future AI explanation layer
+```
+
+`RaceIntelligenceEngine` (`domain/intelligence/RaceIntelligenceEngine.kt`) is
+deterministic rule-based analysis — no AI model, no external call — meant as
+the foundation a future AI explanation layer reads from (`RaceInsight`s)
+rather than raw `RaceState`. `analyse(state: RaceState): List<RaceInsight>`
+runs five detectors and returns their combined output, highest
+`InsightPriority` first.
+
+- **Stateful, unlike the rest of the domain layer.** Gap-closing/increasing
+  and "fastest car" are *trends* — they need the previous state to compare
+  against, but the ticket's fixed signature only takes one `RaceState`. So
+  `RaceIntelligenceEngine` remembers the last state it was given internally
+  (`private var previousState`) and diffs against it each call. Battle
+  detection and tyre concern are stateless (computed from the current state
+  alone) and work even on the very first call.
+- **This assumes chronological input.** If fed states out of order — e.g.
+  from scrubbing a replay timeline backwards — the "previous state" would no
+  longer represent the moment immediately before the current one, and
+  gap-trend/fastest-car insights could be misleading. Not solved in v1; see
+  Limitations.
+- **This is why `RaceIntelligenceViewModel` reads `RaceEngine` directly,
+  not `RaceTimeline`** — the one deliberate exception to the rule
+  established above. `RaceEngine`'s state only ever advances forward in
+  real time; `RaceTimeline` can jump anywhere via `previous`/`next`/`seek`.
+  Feeding the stateful engine from the timeline would risk exactly the
+  out-of-order problem above. The trade-off: intelligence insights always
+  describe the *live* race, never whatever moment is currently being
+  replayed.
+- **Gap trend is measured to the leader, not the car ahead.** `CarState`
+  only carries `gapToLeaderSeconds`, so "PIA is closing on VER" means PIA's
+  gap to whoever currently holds P1 is shrinking — not necessarily the car
+  immediately in front of PIA on track.
+- **Battle detection compares adjacent *positions*, not adjacent gaps.**
+  Cars are sorted by `position` and checked pairwise
+  (`zipWithNext`); the gap compared is `abs(behind.gap - ahead.gap)`,
+  covering the "1.5 seconds" threshold regardless of which of the two has
+  the larger recorded gap (the synthetic simulator's independent per-car
+  random walk doesn't guarantee gaps stay monotonic with position).
+- **Priority/threshold values are this ticket's judgment calls**, not
+  specified by the ticket beyond "battle = 1.5 seconds, HIGH": gap-trend
+  threshold 0.3s, fastest-car minimum gain 0.1s, tyre concern at 20 laps,
+  gap-trend/tyre-concern priority MEDIUM, fastest-car priority LOW. All are
+  named constants at the top of the file, not buried magic numbers.
+- **`DRS_RANGE` has no detector.** It's in `InsightType` because the ticket's
+  enum spec includes it, but only five detectors were requested — it's
+  reserved for a future ticket.
 
 ## State management
 
@@ -346,6 +405,12 @@ ends of the recorded history (`timelinePosition == 0` /
 `timelinePosition == timelineSize - 1`) rather than being no-ops, so the UI
 never suggests an action that wouldn't do anything.
 
+`RaceIntelligenceSection` (`feature/race/components/RaceIntelligenceSection.kt`)
+shows the top 3 `RaceInsight`s (`insights.take(3)`, truncation is the UI's
+job, not the engine's — `RaceIntelligenceEngine` returns everything it
+found). Same pattern as every other Race component: plain `List<RaceInsight>`
+in, no reference to the engine or either ViewModel.
+
 ## Icons
 
 `material-icons-core` (the default Compose Material dependency) only bundles
@@ -364,10 +429,13 @@ Hilt is wired at these points:
 - `MainActivity` — `@AndroidEntryPoint`.
 - Every ViewModel — `@HiltViewModel`, obtained in Compose via
   `hiltViewModel()`.
-- `RaceEngine`, `RaceSimulator`, and `RaceTimeline` — all
-  `@Singleton @Inject constructor(...)`, constructor-injected directly (no
-  `@Module` needed for any of them — Hilt/Dagger discovers `@Inject`
-  constructors automatically).
+- `RaceEngine`, `RaceSimulator`, `RaceTimeline`, and `RaceIntelligenceEngine`
+  — all `@Singleton @Inject constructor(...)`, constructor-injected directly
+  (no `@Module` needed for any of them — Hilt/Dagger discovers `@Inject`
+  constructors automatically). `RaceIntelligenceEngine` needs `@Singleton`
+  for more than consistency: it's stateful (remembers the previous
+  `RaceState`), so a second instance would mean a second, independent
+  "memory" of race history — there must be exactly one.
 - `core/di/DomainModule.kt` — the one Hilt `@Module` in the project so far,
   `@InstallIn(SingletonComponent::class)`, providing the one thing that
   *can't* be constructor-injected: a `@DefaultDispatcher`-qualified
@@ -393,18 +461,23 @@ there is a real API client or entity would be dead code.
   `@Before`/`resetMain()` in `@After` since `viewModelScope` needs a `Main`
   dispatcher that doesn't exist by default on the JVM.
 - **Domain unit tests** (`app/src/test`) — `RaceEngineTest`, `RaceSimulatorTest`,
-  and `RaceTimelineTest` construct `RaceEngine()`/`RaceSimulator(...)`/
-  `RaceTimeline(...)` directly, bypassing Hilt entirely (there's no Android
-  context needed to build a pure Kotlin class). `RaceSimulatorTest` passes a
-  `StandardTestDispatcher(testScheduler)` in place of the Hilt-provided
-  `Dispatchers.Default`, so `advanceTimeBy()` fast-forwards the simulator's
-  real `delay(1_000)` tick loop under virtual time instead of the test
-  actually waiting on a wall clock. `RaceTimelineTest` passes a bare
+  `RaceTimelineTest`, and `RaceIntelligenceEngineTest` construct
+  `RaceEngine()`/`RaceSimulator(...)`/`RaceTimeline(...)`/
+  `RaceIntelligenceEngine()` directly, bypassing Hilt entirely (there's no
+  Android context needed to build a pure Kotlin class). `RaceSimulatorTest`
+  passes a `StandardTestDispatcher(testScheduler)` in place of the
+  Hilt-provided `Dispatchers.Default`, so `advanceTimeBy()` fast-forwards the
+  simulator's real `delay(1_000)` tick loop under virtual time instead of the
+  test actually waiting on a wall clock. `RaceTimelineTest` passes a bare
   `StandardTestDispatcher()` too, but for a different reason: since it's
   never advanced, `RaceTimeline`'s `init`-block auto-subscription to
   `RaceEngine` simply never runs, so every test can call `record()` directly
   and reason about it in isolation, with no coroutine test machinery
-  (`runTest`, etc.) needed at all.
+  (`runTest`, etc.) needed at all. `RaceIntelligenceEngineTest` needs no
+  coroutine setup at all — `analyse()` is a plain synchronous function — but
+  its gap-trend/fastest-car tests call `analyse()` twice on the same engine
+  instance (seeding, then asserting) to exercise the stateful comparison
+  against a previous call.
 - **Compose UI / navigation tests** (`app/src/androidTest`) — use
   `createAndroidComposeRule<MainActivity>()` plus `HiltAndroidRule` for
   screens wired through Hilt, and a custom `HiltTestRunner`

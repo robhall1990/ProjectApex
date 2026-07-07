@@ -16,15 +16,18 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.projectapex.R
+import com.projectapex.feature.race.components.RaceIntelligenceSection
 import com.projectapex.feature.race.components.RaceLeaderboard
 import com.projectapex.feature.race.components.ReplayControls
 import com.projectapex.feature.race.components.UnwrappedTrackView
 
 @Composable
 fun RaceScreen(
-    viewModel: RaceViewModel = hiltViewModel()
+    viewModel: RaceViewModel = hiltViewModel(),
+    intelligenceViewModel: RaceIntelligenceViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val insights by intelligenceViewModel.insights.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -50,5 +53,7 @@ fun RaceScreen(
         UnwrappedTrackView(raceState = uiState.raceState)
 
         RaceLeaderboard(raceState = uiState.raceState)
+
+        RaceIntelligenceSection(insights = insights)
     }
 }

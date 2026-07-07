@@ -6,10 +6,12 @@ Project Apex is a native Android client for live F1 timing, circuit visualisatio
 and race analysis. This repository currently contains the production foundation,
 the bottom-nav app shell, a pure-Kotlin race domain model (`RaceEngine`), a
 development-only race simulator, the signature "unwrapped track" race-distance
-ribbon and leaderboard, and a replay timeline (`RaceTimeline`) that records
-race history and lets the UI scrub through it independently of the live state.
-There is still no real data source — everything on screen today comes from
-the Developer Mode simulator, not a live timing feed.
+ribbon and leaderboard, a replay timeline (`RaceTimeline`) that records race
+history and lets the UI scrub through it independently of the live state, and
+a deterministic rule-based analysis engine (`RaceIntelligenceEngine`) that
+flags battles, gap trends, and tyre concerns — no AI models, no external
+calls. There is still no real data source — everything on screen today comes
+from the Developer Mode simulator, not a live timing feed.
 
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
@@ -78,11 +80,14 @@ com.projectapex
 │   ├── race/          RaceEngine — owns the current RaceState as a StateFlow
 │   ├── simulation/    RaceSimulator — generates believable fake race updates
 │   │                   for UI development (dev-only, not production data)
-│   └── timeline/      RaceTimeline — records RaceState history; previous/next/seek
+│   ├── timeline/      RaceTimeline — records RaceState history; previous/next/seek
+│   └── intelligence/  RaceIntelligenceEngine — deterministic RaceInsight
+│                       detectors (battles, gap trends, tyre concerns)
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
-│   ├── race/          Screen + ViewModel, reading RaceTimeline's state live
-│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls
+│   ├── race/          Screen + 2 ViewModels (Race data + Race Intelligence)
+│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls,
+│   │                     RaceIntelligenceSection
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
 │   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
 ├── ApexApplication.kt Hilt application entry point
@@ -91,14 +96,17 @@ com.projectapex
 
 `domain/` holds the race data model, `RaceEngine` (owns the current race
 state as a `StateFlow`), `RaceSimulator` (a development-only tool that
-generates believable fake race updates once a second), and `RaceTimeline`
+generates believable fake race updates once a second), `RaceTimeline`
 (records every state `RaceEngine` ever holds, capped at 1000 snapshots, and
 lets the UI browse that history via previous/next/seek independently of
-whatever's currently live) — all pure Kotlin, no Android or networking
-dependencies. The Race screen reads `RaceTimeline` via `RaceViewModel`; it
-has no idea `RaceEngine` or the simulator exist. `data/` is still absent: it
-will be introduced when a real data source (e.g. a live timing feed) exists
-to push updates into `RaceEngine`.
+whatever's currently live), and `RaceIntelligenceEngine` (deterministic rules
+over `RaceState` — no AI, no network calls — producing `RaceInsight`s like
+"VER and NOR are battling") — all pure Kotlin, no Android or networking
+dependencies. The Race screen reads `RaceTimeline` for race data and
+`RaceEngine` directly for intelligence (see docs/Architecture.md for why
+those differ). `data/` is still absent: it will be introduced when a real
+data source (e.g. a live timing feed) exists to push updates into
+`RaceEngine`.
 
 ## Current screens
 
@@ -108,10 +116,11 @@ to push updates into `RaceEngine`.
 - **Race** ("Live Race") — a LIVE MODE/REPLAY MODE indicator with
   Previous/Play-Pause/Next controls (`ReplayControls`), an unwrapped-track
   ribbon (`UnwrappedTrackView`) showing each car's race-distance progress and
-  position, and a leaderboard (`RaceLeaderboard`) with position/driver/gap.
-  All three render from whatever `RaceTimeline` is currently pointed at —
-  empty and showing a "no active session" message until Developer Mode is
-  started.
+  position, a leaderboard (`RaceLeaderboard`) with position/driver/gap, and a
+  Race Intelligence section showing the top 3 detected insights. The first
+  three render from whatever `RaceTimeline` is currently pointed at (empty
+  until Developer Mode is started); Race Intelligence always reflects the
+  live race, independent of replay position.
 - **Analysis** — placeholder tab for future session analysis tooling.
 - **Settings** — placeholder tab for user preferences, plus a **Developer
   Mode** card (see below).
