@@ -9,12 +9,12 @@ plugins {
 
 android {
     namespace = "com.projectapex"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.projectapex"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 37
         versionCode = 2
         versionName = "1.1"
 
