@@ -3,9 +3,11 @@
 The smartest way to watch Formula 1.
 
 Project Apex is a native Android client for live F1 timing, circuit visualisation,
-and race analysis. This repository currently contains the production foundation:
-architecture, navigation, theming, and four placeholder screens. No business
-logic (live timing, replay, strategy insights, etc.) has been implemented yet.
+and race analysis. This repository currently contains the production foundation
+and the first real dashboard shell — architecture, navigation, theming, and the
+Apex Command Centre (Race, Analysis, Settings). No business logic (live timing,
+replay, strategy insights, etc.) has been implemented yet; all session data on
+screen is static placeholder state.
 
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
@@ -25,6 +27,7 @@ follow.
 | Networking         | Retrofit + OkHttp *(dependency only, not yet wired up)* |
 | Image loading      | Coil                                |
 | Persistence        | Room *(dependency only, not yet wired up)* |
+| Icons              | Compose Material Icons (core + extended) |
 | Testing            | JUnit, Compose UI Testing, Hilt Testing |
 
 - **Min SDK:** 28
@@ -64,12 +67,14 @@ configuration is required beyond a valid `local.properties` `sdk.dir`
 com.projectapex
 ├── core/
 │   ├── theme/        Material 3 theme, color scheme, typography
-│   └── navigation/    NavHost and route definitions
+│   ├── model/         Shared, feature-agnostic domain-ish models (e.g. SessionState)
+│   ├── ui/            Reusable Compose components (e.g. ApexCard)
+│   └── navigation/    Top-level NavHost, bottom-nav shell, route definitions
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
-│   ├── home/          Home screen (Screen + ViewModel)
-│   ├── race/          Race screen (Screen + ViewModel)
-│   └── settings/      Settings screen (Screen + ViewModel)
+│   ├── race/          Apex Command Centre dashboard (Screen + ViewModel + cards)
+│   ├── analysis/      Analysis tab (Screen + ViewModel)
+│   └── settings/      Settings tab (Screen + ViewModel)
 ├── ApexApplication.kt Hilt application entry point
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
 ```
@@ -80,8 +85,12 @@ repository or use case, rather than scaffolded empty.
 
 ## Current screens
 
-- **Splash** — brief branded loading screen, auto-navigates to Home.
-- **Home** — "Project Apex" title, tagline, and an "Enter Garage" button that
-  navigates to Race. A settings icon in the top bar navigates to Settings.
-- **Race** — placeholder for the live timing / circuit visualisation surface.
-- **Settings** — placeholder for user preferences.
+- **Splash** — brief branded loading screen, auto-navigates into the main shell.
+- **Main shell** — a `Scaffold` with a bottom navigation bar (Race / Analysis /
+  Settings) wrapping a nested `NavHost`. Race is the default tab.
+- **Race** ("Apex Command Centre") — the header ("PROJECT APEX" + tagline), a
+  Next Session card (event, session type, time, status — static placeholder
+  data), an "ENTER LIVE SESSION" button (currently a no-op), and a Race
+  Intelligence card listing upcoming capabilities.
+- **Analysis** — placeholder tab for future session analysis tooling.
+- **Settings** — placeholder tab for user preferences.

@@ -1,4 +1,4 @@
-package com.projectapex.feature.settings
+package com.projectapex.feature.analysis
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,8 +12,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
-fun SettingsScreen(
-    viewModel: SettingsViewModel = hiltViewModel()
+fun AnalysisScreen(
+    viewModel: AnalysisViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 

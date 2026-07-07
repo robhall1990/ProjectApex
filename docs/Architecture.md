@@ -21,7 +21,7 @@ collects state with `collectAsStateWithLifecycle()` and forwards user
 actions either as ViewModel calls or navigation callbacks passed in from
 `ApexNavHost`.
 
-This pattern is applied uniformly to all four screens — including Race and
+This pattern is applied uniformly to every screen — including Analysis and
 Settings, which have no real state yet — so that the next engineer adding a
 feature has exactly one pattern to copy, not a judgment call about when
 MVVM "is worth it."
@@ -32,19 +32,28 @@ MVVM "is worth it."
 com.projectapex
 ├── core/
 │   ├── theme/        Cross-feature Compose theme (colors, typography, MaterialTheme wrapper)
-│   └── navigation/    ApexDestination (routes) and ApexNavHost (graph)
+│   ├── model/         Shared state models with no feature owner (e.g. SessionState)
+│   ├── ui/            Reusable Compose components (e.g. ApexCard)
+│   └── navigation/    ApexDestination/ApexBottomDestination (routes), ApexNavHost
+│                       (top-level graph), ApexMainScreen (bottom-nav shell),
+│                       ApexBottomNavBar (reusable nav bar)
 ├── feature/
 │   ├── splash/
-│   ├── home/
-│   ├── race/
+│   ├── race/          Screen + ViewModel + NextSessionCard + RaceIntelligenceCard
+│   ├── analysis/
 │   └── settings/
 ├── ApexApplication.kt
 └── MainActivity.kt
 ```
 
-`core/ui` and `core/util` are not present. They will be added only when a
-composable or utility function is genuinely shared across two or more
-features — introducing them speculatively would be premature abstraction.
+`core/ui` holds components reused across two or more feature screens
+(currently just `ApexCard`, the shared surface treatment behind the Race
+dashboard's cards). `core/model` holds state shapes with no single feature
+owner (currently `SessionState`/`SessionStatus`, since a session concept will
+eventually be read by both Race and Analysis). Neither existed before the
+Race dashboard needed them — they were not scaffolded speculatively.
+
+`core/util` still does not exist, for the same reason.
 
 `data/` and `domain/` are absent for the same reason: there is no repository,
 API client, or use case yet, because no feature reads or writes real data.
@@ -82,16 +91,34 @@ not depend on composition lifecycle.
 
 ## Navigation
 
-`ApexNavHost` is the single `NavHost` for the app, declared once in
-`MainActivity`. Routes are defined as a sealed class (`ApexDestination`)
-rather than raw strings, so route typos fail at compile time. Screens do
-not call `NavController` methods directly — `ApexNavHost` passes navigation
-as plain lambdas (`onEnterGarage`, `onBack`, etc.) into each screen. This
-keeps screens navigation-agnostic and easy to preview/test in isolation.
+Navigation is two-level, which is the standard shape for "splash then
+bottom-nav shell" apps:
 
-Splash removes itself from the back stack on navigating to Home
-(`popUpTo(Splash) { inclusive = true }`), so back-press from Home exits the
-app rather than re-showing Splash.
+- **Top-level** (`ApexNavHost`, declared once in `MainActivity`): `Splash` →
+  `Main`. Routes come from the sealed class `ApexDestination` rather than raw
+  strings, so a typo'd route fails at compile time, not at runtime.
+- **Nested** (`ApexMainScreen`): owns its own `NavController` and `NavHost`
+  inside a `Scaffold` whose `bottomBar` is `ApexBottomNavBar`. Its three
+  routes — Race, Analysis, Settings — come from `ApexBottomDestination`, a
+  second sealed class carrying a route, label, and icon per tab. Race is the
+  `startDestination`.
+
+`ApexBottomNavBar` follows the standard Navigation Compose bottom-nav
+pattern: `launchSingleTop = true`, `restoreState = true`, and
+`popUpTo(graph.findStartDestination())` with `saveState = true`, so switching
+tabs preserves each tab's own back stack/scroll position instead of
+rebuilding it, and repeated taps on the same tab don't stack duplicate
+destinations.
+
+Screens do not call `NavController` methods directly. `ENTER LIVE SESSION` on
+the Race dashboard is a deliberate no-op (`onClick = {}`) rather than a
+lambda parameter, because there is nowhere for it to navigate yet — it is a
+placeholder for a future live-session destination, not a wired callback with
+nothing behind it.
+
+Splash removes itself from the back stack on navigating to Main
+(`popUpTo(Splash) { inclusive = true }`), so back-press from the Race tab
+exits the app rather than re-showing Splash.
 
 ## Theming
 
@@ -103,6 +130,28 @@ read as premium/technical rather than sporty.
 wallpaper-based dynamic color is supported but opt-in, because the brand
 palette is a deliberate design choice that should not be silently overridden
 by a user's wallpaper.
+
+## Reusable UI components
+
+`core/ui/ApexCard` is the one genuinely cross-feature component so far: a
+`Card` wrapper providing the consistent rounded-corner, tonal-surface,
+padded-`Column` treatment used by every dashboard card. `NextSessionCard` and
+`RaceIntelligenceCard` build on top of it but stay in `feature/race`, because
+their content (event name, session status, capability checklist) is
+Race-specific — only the container styling is shared. If a future feature
+(e.g. Analysis) needs a visually similar but differently-populated card, it
+should compose `ApexCard` the same way rather than reusing a Race-specific
+card component.
+
+## Icons
+
+`material-icons-core` (the default Compose Material dependency) only bundles
+a curated ~50-icon subset — it does not include icons like `Flag` or
+`Insights` that the bottom nav needed for a professional-feeling Race/Analysis
+tab bar. `material-icons-extended` is added alongside it for access to the
+full Material icon set. This is a deliberate size/quality trade-off: R8
+strips unused icons from the release build (minification is already enabled
+there), so the cost is a slower debug build, not a bloated release APK.
 
 ## Dependency injection
 
@@ -122,27 +171,41 @@ client or entity would be dead code.
 ## Testing strategy
 
 - **ViewModel unit tests** (`app/src/test`) — plain JUnit, no
-  Android/Hilt/Compose dependency, run on the JVM. `HomeViewModelTest` is
-  the existing example.
+  Android/Hilt/Compose dependency, run on the JVM. `RaceViewModelTest`
+  asserts the default `RaceUiState` (offline session, event name, capability
+  list) without touching Compose or Android at all.
 - **Compose UI / navigation tests** (`app/src/androidTest`) — use
   `createAndroidComposeRule<MainActivity>()` plus `HiltAndroidRule` for
   screens wired through Hilt, and a custom `HiltTestRunner`
   (`testInstrumentationRunner`) that swaps in `HiltTestApplication`.
-  `ApexNavigationTest` exercises the real Splash → Home → Race flow rather
-  than testing a screen in isolation, since navigation wiring is exactly
-  what a foundation-level test should catch.
+  `ApexNavigationTest` exercises the real Splash → Race dashboard flow, then
+  drives the bottom nav bar to Analysis and Settings, rather than testing a
+  screen in isolation, since navigation wiring is exactly what a
+  foundation-level test should catch.
+  - Bottom nav labels intentionally collide with each destination's
+    placeholder screen content (both say "Analysis", both say "Settings").
+    The tests account for this by asserting on the *count* of matching nodes
+    (`>= 2` after navigating: one for the nav bar label, one for the screen
+    body) via `onAllNodesWithText(...).fetchSemanticsNodes().size`, rather
+    than `onNodeWithText(...).assertExists()`, which throws if more than one
+    node matches.
 
 New features should follow the same split: pure logic in a ViewModel test,
 end-to-end flow in a Compose navigation test — rather than trying to unit
 test Composables directly.
 
-## Adding a new feature screen
+## Adding a new feature
 
-1. Create `feature/<name>/<Name>Screen.kt` and `<Name>ViewModel.kt` following
-   the existing four as a template (immutable `UiState`, `StateFlow`,
-   `@HiltViewModel`, `hiltViewModel()`).
-2. Add a route to `ApexDestination`.
-3. Register the composable in `ApexNavHost`, passing navigation callbacks as
-   lambdas — do not inject `NavController` into the screen or ViewModel.
-4. If the feature needs real data, introduce `data/` and `domain/` packages
-   at that point (see [Package structure](#package-structure)), not before.
+- **New bottom-nav tab**: add an entry to `ApexBottomDestination`, create
+  `feature/<name>/<Name>Screen.kt` + `<Name>ViewModel.kt` following the
+  existing screens as a template, and register the composable in
+  `ApexMainScreen`'s nested `NavHost`.
+- **New screen reached by push navigation** (not a tab): add a route to
+  `ApexDestination` and register it in the appropriate `NavHost` — the
+  top-level one in `ApexNavHost` if it sits outside the bottom-nav shell, or
+  the nested one in `ApexMainScreen` if it's pushed from within a tab.
+- In both cases: immutable `UiState`, `StateFlow`, `@HiltViewModel`,
+  `hiltViewModel()`; don't inject `NavController` into the screen or
+  ViewModel, pass navigation as lambdas instead.
+- If the feature needs real data, introduce `data/` and `domain/` packages
+  at that point (see [Package structure](#package-structure)), not before.

@@ -1,8 +1,8 @@
 package com.projectapex
 
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import dagger.hilt.android.testing.HiltAndroidRule
@@ -19,14 +19,37 @@ class ApexNavigationTest {
     @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
-    @Test
-    fun enteringGarageFromHomeNavigatesToRaceScreen() {
+    private fun waitForNodesWithText(text: String, minCount: Int = 1) {
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText("Enter Garage").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText(text).fetchSemanticsNodes().size >= minCount
         }
+    }
 
-        composeRule.onNodeWithText("Enter Garage").performClick()
+    @Test
+    fun raceDashboardRendersAfterSplash() {
+        waitForNodesWithText("ENTER LIVE SESSION")
 
-        composeRule.onNodeWithText("Race").assertExists()
+        composeRule.onNodeWithText("PROJECT APEX").assertExists()
+        composeRule.onNodeWithText("British Grand Prix").assertExists()
+    }
+
+    @Test
+    fun bottomNavigationSwitchesToAnalysisTab() {
+        waitForNodesWithText("ENTER LIVE SESSION")
+
+        // Before navigating, "Analysis" only appears once, as the nav bar label.
+        composeRule.onAllNodesWithText("Analysis").onFirst().performClick()
+
+        // After navigating, it appears a second time as the screen's own content.
+        waitForNodesWithText("Analysis", minCount = 2)
+    }
+
+    @Test
+    fun bottomNavigationSwitchesToSettingsTab() {
+        waitForNodesWithText("ENTER LIVE SESSION")
+
+        composeRule.onAllNodesWithText("Settings").onFirst().performClick()
+
+        waitForNodesWithText("Settings", minCount = 2)
     }
 }

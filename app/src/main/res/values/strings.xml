@@ -1,7 +1,9 @@
 <resources>
     <string name="app_name">Project Apex</string>
-    <string name="home_tagline">The smartest way to watch Formula 1.</string>
-    <string name="home_enter_garage">Enter Garage</string>
-    <string name="nav_settings">Settings</string>
-    <string name="nav_back">Back</string>
+
+    <string name="race_header_title">PROJECT APEX</string>
+    <string name="race_header_subtitle">The smartest way to watch Formula 1.</string>
+    <string name="race_enter_live_session">ENTER LIVE SESSION</string>
+    <string name="race_intelligence_title">Race Intelligence</string>
+    <string name="race_intelligence_no_active_session">No active session</string>
 </resources>
