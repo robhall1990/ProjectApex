@@ -53,11 +53,11 @@ com.projectapex
 │                       tyre concerns, ...); no AI, no external calls
 ├── feature/
 │   ├── splash/
-│   ├── race/          Screen + 2 ViewModels (RaceViewModel reads
-│   │   │               RaceTimeline; RaceIntelligenceViewModel reads
-│   │   │               RaceEngine directly - see Domain layer)
-│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls,
-│   │                     RaceIntelligenceSection
+│   ├── race/          Screen + one RaceViewModel, combining RaceTimeline
+│   │   │               (race data + replay position) and RaceEngine ->
+│   │   │               RaceIntelligenceEngine (insights) into one RaceUiState
+│   │   └── components/  UnwrappedTrackView, ReplayControls, RaceIntelligenceSection,
+│   │                     RaceInsightCard, RaceLeaderboard, LeaderboardRow, SectionHeader
 │   ├── analysis/
 │   └── settings/      Screen + ViewModel + DeveloperModeCard (drives RaceSimulator)
 ├── ApexApplication.kt
@@ -264,14 +264,19 @@ runs five detectors and returns their combined output, highest
   longer represent the moment immediately before the current one, and
   gap-trend/fastest-car insights could be misleading. Not solved in v1; see
   Limitations.
-- **This is why `RaceIntelligenceViewModel` reads `RaceEngine` directly,
-  not `RaceTimeline`** — the one deliberate exception to the rule
-  established above. `RaceEngine`'s state only ever advances forward in
-  real time; `RaceTimeline` can jump anywhere via `previous`/`next`/`seek`.
-  Feeding the stateful engine from the timeline would risk exactly the
-  out-of-order problem above. The trade-off: intelligence insights always
-  describe the *live* race, never whatever moment is currently being
-  replayed.
+- **This is why `RaceViewModel` reads `RaceEngine` directly for insights,
+  not `RaceTimeline`** — the one deliberate exception to "the Race screen
+  reads `RaceTimeline`, not `RaceEngine`." `RaceEngine`'s state only ever
+  advances forward in real time; `RaceTimeline` can jump anywhere via
+  `previous`/`next`/`seek`. Feeding the stateful engine from the timeline
+  would risk exactly the out-of-order problem above. The trade-off:
+  intelligence insights always describe the *live* race, never whatever
+  moment is currently being replayed. (APX-007 briefly had this split across
+  two ViewModels — `RaceViewModel` and `RaceIntelligenceViewModel` — purely
+  because `RaceUiState` hadn't been asked to carry insights yet; APX-008
+  merged them into one `RaceViewModel`/`RaceUiState`, combining both flows
+  with `combine()`, without changing which domain service feeds which
+  field.)
 - **Gap trend is measured to the leader, not the car ahead.** `CarState`
   only carries `gapToLeaderSeconds`, so "PIA is closing on VER" means PIA's
   gap to whoever currently holds P1 is shrinking — not necessarily the car
@@ -390,26 +395,48 @@ simulator" by construction rather than by convention.
 - **Leader is visually distinct** via `MaterialTheme.colorScheme.primary`
   (not a team colour, per the ticket) on the position-1 marker only.
 
-`RaceLeaderboard` is the plainer of the two: a `Column` of position/driver
-name/gap rows sorted by `car.position`, also keyed by driver id so its own
-recomposition is stable. Both components tolerate an empty `cars` list
-(`RaceState.empty()`, before any simulation has run) by showing a short
-"no active session" message instead of an empty card.
+`RaceLeaderboard` is a `Column` of `LeaderboardRow`s
+(`feature/race/components/LeaderboardRow.kt`) sorted by `car.position`, each
+keyed by driver id so recomposition is stable. `LeaderboardRow` shows
+position, driver name, a small tyre-compound badge, and gap — the badge uses
+the standard F1 tyre-compound colour coding (red/yellow/white/green/blue),
+which is a universal motorsport convention, not a team colour, so it doesn't
+conflict with "no team colours yet." Both `RaceLeaderboard` and
+`UnwrappedTrackView` tolerate an empty `cars` list (`RaceState.empty()`,
+before any simulation has run) by showing a short "no active session"
+message instead of an empty card.
 
 `ReplayControls` (`feature/race/components/ReplayControls.kt`) is the LIVE
-MODE/REPLAY MODE indicator plus Previous/Play-Pause/Next buttons. Like the
+RACE/REPLAY MODE banner plus Previous/Play-Pause/Next buttons. Like the
 other Race components, it takes only plain values and lambdas — no
 `RaceTimeline` reference — so `RaceViewModel` is the only place in the app
-that imports `RaceTimeline` at all. Previous/Next are disabled at the two
-ends of the recorded history (`timelinePosition == 0` /
-`timelinePosition == timelineSize - 1`) rather than being no-ops, so the UI
-never suggests an action that wouldn't do anything.
+that imports `RaceTimeline` at all. Unlike its APX-006 version, the buttons
+are always enabled rather than disabled at the two ends of recorded history:
+APX-008 simplified `RaceUiState` down to exactly the three fields the ticket
+specified (`raceState`, `insights`, `isReplayMode`), dropping
+`timelinePosition`/`timelineSize` — without them, boundary-disabling isn't
+derivable in the UI layer. This is safe because `RaceTimeline.previous()`/
+`next()` already clamp internally, so a boundary press is a harmless no-op;
+the only cost is a lost bit of polish (buttons that could visually grey out
+at the ends but don't).
 
 `RaceIntelligenceSection` (`feature/race/components/RaceIntelligenceSection.kt`)
-shows the top 3 `RaceInsight`s (`insights.take(3)`, truncation is the UI's
-job, not the engine's — `RaceIntelligenceEngine` returns everything it
-found). Same pattern as every other Race component: plain `List<RaceInsight>`
-in, no reference to the engine or either ViewModel.
+shows the top 3 `RaceInsight`s as `RaceInsightCard`s
+(`insights.take(3)`, truncation is the UI's job, not the engine's —
+`RaceIntelligenceEngine` returns everything it found). `RaceInsightCard`
+(`feature/race/components/RaceInsightCard.kt`) shows an emoji keyed off
+`InsightType` (🔥 battle, 📉/📈 gap closing/increasing, ⚡ fastest car, 🎯
+DRS range, 🛞 tyre concern), the insight's title/description, and a small
+coloured dot for `InsightPriority` (error/primary/onSurfaceVariant for
+HIGH/MEDIUM/LOW — deliberately reusing already-themed colours rather than
+the unconfigured Material 3 default `tertiary`). Same pattern as every other
+Race component: plain data in, no reference to the engine or the ViewModel.
+
+`SectionHeader` (`feature/race/components/SectionHeader.kt`) is the one
+component reused *within* `feature/race` itself (as opposed to `ApexCard`,
+reused across features) — the same title styling backs the top LIVE
+RACE/REPLAY MODE banner (via a larger `style` override) and the "Race
+Intelligence"/"Leaderboard" section titles.
 
 ## Icons
 
@@ -452,14 +479,19 @@ there is a real API client or entity would be dead code.
 
 - **ViewModel unit tests** (`app/src/test`) — plain JUnit, no
   Android/Hilt/Compose dependency, run on the JVM. `RaceViewModelTest`
-  constructs `RaceViewModel(RaceTimeline(RaceEngine(), StandardTestDispatcher()))`
-  directly (bypassing Hilt, same as the domain tests below), records two
-  snapshots via the timeline, and asserts `uiState` reflects the latest one
-  live, then flips `isLiveMode` to false after `previous()` — proving the
-  reactive mapping through `RaceTimeline` actually works, not just its
-  initial value. Needs `Dispatchers.setMain(UnconfinedTestDispatcher())` in
-  `@Before`/`resetMain()` in `@After` since `viewModelScope` needs a `Main`
-  dispatcher that doesn't exist by default on the JVM.
+  constructs `RaceViewModel(RaceTimeline(...), RaceEngine(), RaceIntelligenceEngine())`
+  directly (bypassing Hilt, same as the domain tests below). One test records
+  two timeline snapshots and asserts `uiState.raceState`/`isReplayMode`
+  reflect the latest one live, then flip after `previous()` — proving the
+  `combine()` of `raceTimeline.state` actually works, not just its initial
+  value. A second test proves `insights` tracks `RaceEngine`'s state
+  independently of replay position: it populates the timeline directly
+  (bypassing `RaceEngine` entirely) and confirms `insights` stays empty even
+  while `raceState` shows replayed data — the two fields genuinely come from
+  different sources, not both from wherever the timeline points. Needs
+  `Dispatchers.setMain(UnconfinedTestDispatcher())` in `@Before`/
+  `resetMain()` in `@After` since `viewModelScope` needs a `Main` dispatcher
+  that doesn't exist by default on the JVM.
 - **Domain unit tests** (`app/src/test`) — `RaceEngineTest`, `RaceSimulatorTest`,
   `RaceTimelineTest`, and `RaceIntelligenceEngineTest` construct
   `RaceEngine()`/`RaceSimulator(...)`/`RaceTimeline(...)`/
@@ -494,12 +526,13 @@ there is a real API client or entity would be dead code.
     than `onNodeWithText(...).assertExists()`, which throws if more than one
     node matches.
 - **Isolated Compose component tests** (`app/src/androidTest`) —
-  `UnwrappedTrackViewTest` and `ReplayControlsTest` both use the lighter
-  `createComposeRule()` (no `MainActivity`, no Hilt) since both components
-  take plain parameters and need neither. `UnwrappedTrackViewTest` builds
-  `RaceState`/`CarState` fixtures inline rather than reusing
-  `RaceStateFactory`, because that fixture lives in `app/src/test`, a
-  different source set `androidTest` cannot see.
+  `UnwrappedTrackViewTest`, `ReplayControlsTest`, `RaceIntelligenceSectionTest`,
+  and `RaceLeaderboardTest` all use the lighter `createComposeRule()` (no
+  `MainActivity`, no Hilt) since every Race component takes plain parameters
+  and needs neither. Tests that need `RaceState`/`CarState`/`RaceInsight`
+  fixtures build them inline rather than reusing `RaceStateFactory`, because
+  that fixture lives in `app/src/test`, a different source set `androidTest`
+  cannot see.
 - **Full-stack data test**: `RaceScreenTest` (`app/src/androidTest`) is the
   one test that actually proves "Race screen displays race data" rather than
   just "Race screen renders": it injects the real `RaceEngine` singleton via

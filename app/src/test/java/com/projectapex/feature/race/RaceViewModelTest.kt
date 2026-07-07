@@ -1,5 +1,6 @@
 package com.projectapex.feature.race
 
+import com.projectapex.domain.intelligence.RaceIntelligenceEngine
 import com.projectapex.domain.race.RaceEngine
 import com.projectapex.domain.race.RaceStateFactory
 import com.projectapex.domain.timeline.RaceTimeline
@@ -34,12 +35,13 @@ class RaceViewModelTest {
     }
 
     @Test
-    fun `uiState reflects the timeline's current snapshot and mode`() = runTest(mainDispatcher) {
+    fun `uiState reflects the timeline's race data and replay mode`() = runTest(mainDispatcher) {
+        val engine = RaceEngine()
         // A StandardTestDispatcher here means RaceTimeline's own auto-subscription
         // to RaceEngine never runs (its scheduler is never advanced) - only the
         // direct record()/previous() calls below affect the timeline.
-        val timeline = RaceTimeline(RaceEngine(), StandardTestDispatcher())
-        val viewModel = RaceViewModel(timeline)
+        val timeline = RaceTimeline(engine, StandardTestDispatcher())
+        val viewModel = RaceViewModel(timeline, engine, RaceIntelligenceEngine())
         val emissions = mutableListOf<RaceUiState>()
 
         val job = launch {
@@ -52,14 +54,41 @@ class RaceViewModelTest {
         timeline.record(second)
 
         assertEquals(second, emissions.last().raceState)
-        assertTrue(emissions.last().isLiveMode)
-        assertEquals(1, emissions.last().timelinePosition)
-        assertEquals(2, emissions.last().timelineSize)
+        assertFalse(emissions.last().isReplayMode)
 
         timeline.previous()
 
-        assertFalse(viewModel.uiState.value.isLiveMode)
+        assertTrue(viewModel.uiState.value.isReplayMode)
         assertEquals(first, viewModel.uiState.value.raceState)
+
+        job.cancel()
+    }
+
+    @Test
+    fun `insights reflect RaceEngine's live state, independent of replay position`() = runTest(mainDispatcher) {
+        val engine = RaceEngine()
+        val timeline = RaceTimeline(engine, StandardTestDispatcher())
+        val viewModel = RaceViewModel(timeline, engine, RaceIntelligenceEngine())
+        val emissions = mutableListOf<RaceUiState>()
+
+        val job = launch {
+            viewModel.uiState.collect { emissions.add(it) }
+        }
+
+        // Populate the timeline directly, independent of RaceEngine's own
+        // state (the auto-subscription never fires - see setup above).
+        val replayedState = RaceStateFactory.fiveCarField()
+        timeline.record(replayedState)
+        timeline.record(replayedState.copy(currentLap = replayedState.currentLap + 1))
+        timeline.previous()
+
+        assertTrue(viewModel.uiState.value.isReplayMode)
+        assertEquals(replayedState, viewModel.uiState.value.raceState)
+
+        // RaceEngine's own live state was never touched (still empty),
+        // proving insights come from RaceEngine directly - not from
+        // whatever the timeline currently happens to be pointed at.
+        assertTrue(viewModel.uiState.value.insights.isEmpty())
 
         job.cancel()
     }

@@ -6,16 +6,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.projectapex.R
 import com.projectapex.feature.race.components.RaceIntelligenceSection
 import com.projectapex.feature.race.components.RaceLeaderboard
 import com.projectapex.feature.race.components.ReplayControls
@@ -23,11 +19,9 @@ import com.projectapex.feature.race.components.UnwrappedTrackView
 
 @Composable
 fun RaceScreen(
-    viewModel: RaceViewModel = hiltViewModel(),
-    intelligenceViewModel: RaceIntelligenceViewModel = hiltViewModel()
+    viewModel: RaceViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val insights by intelligenceViewModel.insights.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -36,15 +30,8 @@ fun RaceScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        Text(
-            text = stringResource(R.string.race_live_title),
-            style = MaterialTheme.typography.headlineMedium
-        )
-
         ReplayControls(
-            isLiveMode = uiState.isLiveMode,
-            timelinePosition = uiState.timelinePosition,
-            timelineSize = uiState.timelineSize,
+            isReplayMode = uiState.isReplayMode,
             onPreviousClick = viewModel::onPreviousClicked,
             onPlayPauseClick = viewModel::onPlayPauseClicked,
             onNextClick = viewModel::onNextClicked
@@ -52,8 +39,8 @@ fun RaceScreen(
 
         UnwrappedTrackView(raceState = uiState.raceState)
 
-        RaceLeaderboard(raceState = uiState.raceState)
+        RaceIntelligenceSection(insights = uiState.insights)
 
-        RaceIntelligenceSection(insights = insights)
+        RaceLeaderboard(raceState = uiState.raceState)
     }
 }

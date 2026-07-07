@@ -12,13 +12,11 @@ class ReplayControlsTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun displaysLiveModeIndicatorWhenLive() {
+    fun displaysLiveIndicatorWhenLive() {
         composeRule.setContent {
             ProjectApexTheme {
                 ReplayControls(
-                    isLiveMode = true,
-                    timelinePosition = 4,
-                    timelineSize = 5,
+                    isReplayMode = false,
                     onPreviousClick = {},
                     onPlayPauseClick = {},
                     onNextClick = {}
@@ -26,17 +24,15 @@ class ReplayControlsTest {
             }
         }
 
-        composeRule.onNodeWithText("LIVE MODE").assertExists()
+        composeRule.onNodeWithText("LIVE RACE").assertExists()
     }
 
     @Test
-    fun displaysReplayModeIndicatorWhenNotLive() {
+    fun displaysReplayModeIndicatorWhenReplaying() {
         composeRule.setContent {
             ProjectApexTheme {
                 ReplayControls(
-                    isLiveMode = false,
-                    timelinePosition = 2,
-                    timelineSize = 5,
+                    isReplayMode = true,
                     onPreviousClick = {},
                     onPlayPauseClick = {},
                     onNextClick = {}
@@ -52,9 +48,7 @@ class ReplayControlsTest {
         composeRule.setContent {
             ProjectApexTheme {
                 ReplayControls(
-                    isLiveMode = true,
-                    timelinePosition = 4,
-                    timelineSize = 5,
+                    isReplayMode = false,
                     onPreviousClick = {},
                     onPlayPauseClick = {},
                     onNextClick = {}

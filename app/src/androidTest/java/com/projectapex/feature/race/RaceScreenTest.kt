@@ -64,7 +64,7 @@ class RaceScreenTest {
             composeRule.onAllNodesWithText("Lando Norris").fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithText("Live Race").assertExists()
+        composeRule.onNodeWithText("LIVE RACE").assertExists()
         composeRule.onNodeWithText("Lando Norris").assertExists()
         composeRule.onNodeWithText("NOR").assertExists()
     }

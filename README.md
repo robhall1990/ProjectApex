@@ -35,7 +35,7 @@ follow.
 | Testing            | JUnit, Compose UI Testing, Hilt Testing |
 
 - **Min SDK:** 28
-- **Target / Compile SDK:** 35
+- **Target / Compile SDK:** 37
 
 ## Getting started
 
@@ -85,9 +85,9 @@ com.projectapex
 │                       detectors (battles, gap trends, tyre concerns)
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
-│   ├── race/          Screen + 2 ViewModels (Race data + Race Intelligence)
-│   │   └── components/  UnwrappedTrackView, RaceLeaderboard, ReplayControls,
-│   │                     RaceIntelligenceSection
+│   ├── race/          Screen + one RaceViewModel combining race data and insights
+│   │   └── components/  UnwrappedTrackView, ReplayControls, RaceIntelligenceSection,
+│   │                     RaceInsightCard, RaceLeaderboard, LeaderboardRow, SectionHeader
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
 │   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
 ├── ApexApplication.kt Hilt application entry point
@@ -102,25 +102,26 @@ lets the UI browse that history via previous/next/seek independently of
 whatever's currently live), and `RaceIntelligenceEngine` (deterministic rules
 over `RaceState` — no AI, no network calls — producing `RaceInsight`s like
 "VER and NOR are battling") — all pure Kotlin, no Android or networking
-dependencies. The Race screen reads `RaceTimeline` for race data and
+dependencies. `RaceViewModel` reads `RaceTimeline` for race data and
 `RaceEngine` directly for intelligence (see docs/Architecture.md for why
-those differ). `data/` is still absent: it will be introduced when a real
-data source (e.g. a live timing feed) exists to push updates into
-`RaceEngine`.
+those differ), combining both into one `RaceUiState`. `data/` is still
+absent: it will be introduced when a real data source (e.g. a live timing
+feed) exists to push updates into `RaceEngine`.
 
 ## Current screens
 
 - **Splash** — brief branded loading screen, auto-navigates into the main shell.
 - **Main shell** — a `Scaffold` with a bottom navigation bar (Race / Analysis /
   Settings) wrapping a nested `NavHost`. Race is the default tab.
-- **Race** ("Live Race") — a LIVE MODE/REPLAY MODE indicator with
-  Previous/Play-Pause/Next controls (`ReplayControls`), an unwrapped-track
-  ribbon (`UnwrappedTrackView`) showing each car's race-distance progress and
-  position, a leaderboard (`RaceLeaderboard`) with position/driver/gap, and a
-  Race Intelligence section showing the top 3 detected insights. The first
-  three render from whatever `RaceTimeline` is currently pointed at (empty
-  until Developer Mode is started); Race Intelligence always reflects the
-  live race, independent of replay position.
+- **Race** — a LIVE RACE/REPLAY MODE banner with Previous/Play-Pause/Next
+  controls (`ReplayControls`), an unwrapped-track ribbon (`UnwrappedTrackView`)
+  showing each car's race-distance progress and position, a Race Intelligence
+  section with up to 3 insight cards (icon, title, description, priority
+  dot), and a leaderboard (`RaceLeaderboard`) with position/driver/tyre
+  compound/gap. The banner, track, and leaderboard render from whatever
+  `RaceTimeline` is currently pointed at (empty until Developer Mode is
+  started); Race Intelligence always reflects the live race, independent of
+  replay position.
 - **Analysis** — placeholder tab for future session analysis tooling.
 - **Settings** — placeholder tab for user preferences, plus a **Developer
   Mode** card (see below).
