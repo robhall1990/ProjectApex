@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Project Apex</string>
+    <string name="home_tagline">The smartest way to watch Formula 1.</string>
+    <string name="home_enter_garage">Enter Garage</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_back">Back</string>
+</resources>
