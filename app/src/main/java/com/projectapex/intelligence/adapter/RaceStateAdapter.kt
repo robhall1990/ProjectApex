@@ -2,6 +2,7 @@ package com.projectapex.intelligence.adapter
 
 import com.projectapex.core.model.SessionStatus
 import com.projectapex.domain.model.RaceState
+import com.projectapex.domain.model.TrackStatus as AppTrackStatus
 import com.projectapex.intelligence.ingest.CarTiming
 import com.projectapex.intelligence.ingest.PitStatus
 import com.projectapex.intelligence.ingest.Seconds
@@ -23,6 +24,14 @@ import java.time.Instant
  * the synthesis becomes dead weight and gets deleted — nothing downstream
  * knows the difference.
  */
+private val trackStatusMap = mapOf(
+    AppTrackStatus.GREEN to TrackStatus.GREEN,
+    AppTrackStatus.YELLOW to TrackStatus.YELLOW,
+    AppTrackStatus.SAFETY_CAR to TrackStatus.SC,
+    AppTrackStatus.VIRTUAL_SAFETY_CAR to TrackStatus.VSC,
+    AppTrackStatus.RED to TrackStatus.RED,
+)
+
 class RaceStateAdapter {
 
     private var sequence = 0L
@@ -39,9 +48,7 @@ class RaceStateAdapter {
             timestamp = Instant.ofEpochMilli(state.timestamp),
             lap = state.currentLap,
             totalLaps = state.totalLaps,
-            // The app's SessionStatus has no flag model; LIVE maps to GREEN
-            // until a real feed carries track status.
-            trackStatus = TrackStatus.GREEN,
+            trackStatus = trackStatusMap.getValue(state.trackStatus),
             weather = null,
             cars = state.cars.map { car ->
                 CarTiming(

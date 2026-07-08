@@ -79,9 +79,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
-    // Networking dependencies for future live-timing features; not yet wired up.
+    // Networking: OpenF1 live-timing client (core/di/NetworkModule.kt, data/openf1/).
     implementation(libs.retrofit.core)
     implementation(libs.retrofit.converter.kotlinx.serialization)
+    implementation(libs.okhttp.core)
     implementation(libs.okhttp.logging.interceptor)
 
     implementation(libs.coil.compose)
