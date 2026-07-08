@@ -15,7 +15,10 @@ from the Developer Mode simulator, not a live timing feed.
 
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
-follow.
+follow. See [docs/RaceIntelligencePlatform.md](docs/RaceIntelligencePlatform.md)
+for the design specification of the full Race Intelligence Platform — the
+prediction-focused engine (deterministic core + LLM narration layer) that the
+current `RaceIntelligenceEngine` will grow into.
 
 ## Tech stack
 

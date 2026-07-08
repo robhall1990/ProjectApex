@@ -246,6 +246,12 @@ see [RaceIntelligenceEngine](#raceintelligenceengine) below for why.)
 RaceState -> RaceIntelligenceEngine -> RaceInsight list -> Future AI explanation layer
 ```
 
+> The full-scale successor to this engine — a prediction-focused intelligence
+> platform with 26 detectors, a mathematical ranking model, deterministic
+> prediction algorithms, and an LLM narration layer — is specified in
+> [RaceIntelligencePlatform.md](RaceIntelligencePlatform.md). What follows
+> describes the v1 engine as implemented today.
+
 `RaceIntelligenceEngine` (`domain/intelligence/RaceIntelligenceEngine.kt`) is
 deterministic rule-based analysis — no AI model, no external call — meant as
 the foundation a future AI explanation layer reads from (`RaceInsight`s)
