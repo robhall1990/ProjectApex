@@ -11,19 +11,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.projectapex.R
-import com.projectapex.domain.intelligence.RaceInsight
+import com.projectapex.feature.race.RaceInsightUi
 
 private const val MAX_DISPLAYED_INSIGHTS = 3
 
 /**
- * The top [MAX_DISPLAYED_INSIGHTS] insights from [com.projectapex.domain.intelligence.RaceIntelligenceEngine]
- * as a clean, dividing-line-separated feed - highest priority first, since
- * that's the order the engine already returns them in. Plain data only - no
- * reference to the engine or RaceEngine, same as every other Race component.
+ * The top [MAX_DISPLAYED_INSIGHTS] insights from the intelligence platform's
+ * [com.projectapex.intelligence.rank.RacePulse] (already ranked, most
+ * important first), mapped to [RaceInsightUi] by the ViewModel and rendered as
+ * a clean, dividing-line-separated feed. Plain presentation data only — no
+ * reference to detectors, observations, or the pulse engine.
  */
 @Composable
 fun RaceIntelligenceSection(
-    insights: List<RaceInsight>,
+    insights: List<RaceInsightUi>,
     modifier: Modifier = Modifier
 ) {
     SectionCard(title = stringResource(R.string.race_intelligence_title), modifier = modifier) {

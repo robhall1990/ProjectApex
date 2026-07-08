@@ -34,6 +34,8 @@ data class IntelligenceConfig(
     val degPriors: Map<TyreCompound, DegPrior> = DEFAULT_DEG_PRIORS,
     /** Scoring constants of the PrioritisationEngine (APX-011). */
     val prioritisation: PrioritisationConfig = PrioritisationConfig(),
+    /** Thresholds for the combat detector family (APX-012). */
+    val combat: CombatConfig = CombatConfig(),
 ) {
     companion object {
         val DEFAULT_DEG_PRIORS: Map<TyreCompound, DegPrior> = mapOf(

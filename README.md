@@ -8,17 +8,19 @@ the bottom-nav app shell, a pure-Kotlin race domain model (`RaceEngine`), a
 development-only race simulator, the signature "unwrapped track" race-distance
 ribbon and leaderboard, a replay timeline (`RaceTimeline`) that records race
 history and lets the UI scrub through it independently of the live state, and
-a deterministic rule-based analysis engine (`RaceIntelligenceEngine`) that
-flags battles, gap trends, and tyre concerns — no AI models, no external
-calls. There is still no real data source — everything on screen today comes
-from the Developer Mode simulator, not a live timing feed.
+a modular, prediction-focused race intelligence platform (the `:intelligence`
+module) whose combat detectors flag battles, DRS chances, tyre cliffs, and
+leader pressure and rank the three most important things happening — no AI
+models, no external calls. There is still no real data source — everything on
+screen today comes from the Developer Mode simulator, not a live timing feed.
 
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
 follow. See [docs/RaceIntelligencePlatform.md](docs/RaceIntelligencePlatform.md)
-for the design specification of the full Race Intelligence Platform — the
-prediction-focused engine (deterministic core + LLM narration layer) that the
-current `RaceIntelligenceEngine` will grow into.
+for the full Race Intelligence Platform specification (the prediction-focused
+engine + LLM narration layer being built out slice by slice) and
+[docs/DetectionFramework.md](docs/DetectionFramework.md) for the detector /
+prioritisation framework the combat detectors plug into.
 
 ## Tech stack
 
@@ -97,19 +99,21 @@ com.projectapex
 │   ├── simulation/    RaceSimulator — generates believable fake race updates
 │   │                   for UI development (dev-only, not production data)
 │   ├── timeline/      RaceTimeline — records RaceState history; previous/next/seek
-│   └── intelligence/  RaceIntelligenceEngine — deterministic RaceInsight
-│                       detectors (battles, gap trends, tyre concerns)
+│   (race intelligence now lives in the :intelligence module; the app drives it
+│    from RaceEngine via intelligence/adapter/RacePulseEngine)
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
-│   ├── race/          Screen + one RaceViewModel combining race data and insights
+│   ├── race/          Screen + one RaceViewModel combining race data (timeline)
+│   │   │               and intelligence (RacePulse via ObservationPresenter)
 │   │   └── components/  SessionHeader, RaceStatusBar, UnwrappedTrackView,
 │   │                     RaceIntelligenceSection, RaceInsightCard, RaceLeaderboard,
 │   │                     LeaderboardRow, PanelHeader, SectionCard, StatusChip, InfoRow
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
 │   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
-├── intelligence/  adapter/RaceStateAdapter — bridges RaceState into the
-│                   :intelligence module's TimingFrame (lives here because it
-│                   must see both sides; :intelligence never imports app types)
+├── intelligence/  adapter/ — RaceStateAdapter (RaceState → TimingFrame) and
+│                   RacePulseEngine (drives the :intelligence pipeline from
+│                   RaceEngine, exposes StateFlow<RacePulse>). Lives in :app
+│                   because it wires both sides; :intelligence never imports app types.
 ├── ApexApplication.kt Hilt application entry point
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
 ```
@@ -120,25 +124,26 @@ APX-010 built the ingestion and features layers; APX-011 added the
 [detection framework and prioritisation engine](docs/DetectionFramework.md) —
 a registration-only detector platform (`Detector` → `DetectorEngine` →
 `Observation`s → `PrioritisationEngine` → `RacePulse`) with failure isolation,
-per-detector metrics, and configurable multiplicative scoring. It is
-deliberately a plain Kotlin/JVM module — no Android plugin — so an accidental
-`android.*` import cannot compile, and the same artifact runs on-device, in
-fast JVM tests, or server-side. Concrete detector families, prediction, and
-narration land in later tickets on top of these foundations.
+per-detector metrics, and configurable multiplicative scoring; APX-012 added
+the first eight **combat detectors** (battle, DRS active/imminent, gap
+closing/increasing, leader pressure, fastest pace, tyre concern/cliff) and
+wired the platform into the app, replacing the legacy `RaceIntelligenceEngine`.
+It is deliberately a plain Kotlin/JVM module — no Android plugin — so an
+accidental `android.*` import cannot compile, and the same artifact runs
+on-device, in fast JVM tests, or server-side. Prediction and narration land in
+later tickets on top of these foundations.
 
 `domain/` holds the race data model, `RaceEngine` (owns the current race
 state as a `StateFlow`), `RaceSimulator` (a development-only tool that
-generates believable fake race updates once a second), `RaceTimeline`
+generates believable fake race updates once a second), and `RaceTimeline`
 (records every state `RaceEngine` ever holds, capped at 1000 snapshots, and
 lets the UI browse that history via previous/next/seek independently of
-whatever's currently live), and `RaceIntelligenceEngine` (deterministic rules
-over `RaceState` — no AI, no network calls — producing `RaceInsight`s like
-"VER and NOR are battling") — all pure Kotlin, no Android or networking
-dependencies. `RaceViewModel` reads `RaceTimeline` for race data and
-`RaceEngine` directly for intelligence (see docs/Architecture.md for why
-those differ), combining both into one `RaceUiState`. `data/` is still
-absent: it will be introduced when a real data source (e.g. a live timing
-feed) exists to push updates into `RaceEngine`.
+whatever's currently live) — all pure Kotlin, no Android or networking
+dependencies. `RaceViewModel` reads `RaceTimeline` for race data and the
+`RacePulseEngine` (fed from the live `RaceEngine`) for intelligence, combining
+both into one `RaceUiState`. `data/` is still absent: it will be introduced
+when a real data source (e.g. a live timing feed) exists to push updates into
+`RaceEngine`.
 
 ## Current screens
 

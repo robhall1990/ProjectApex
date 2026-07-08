@@ -3,9 +3,8 @@ package com.projectapex.feature.race.components
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import com.projectapex.core.theme.ProjectApexTheme
-import com.projectapex.domain.intelligence.InsightPriority
-import com.projectapex.domain.intelligence.InsightType
-import com.projectapex.domain.intelligence.RaceInsight
+import com.projectapex.feature.race.RaceInsightUi
+import com.projectapex.intelligence.detect.Severity
 import org.junit.Rule
 import org.junit.Test
 
@@ -14,13 +13,12 @@ class RaceIntelligenceSectionTest {
     @get:Rule
     val composeRule = createComposeRule()
 
-    private fun sampleInsight() = RaceInsight(
-        id = "battle-NOR-VER-1000",
-        type = InsightType.BATTLE_DETECTED,
-        priority = InsightPriority.HIGH,
-        title = "NOR and VER are battling",
-        description = "NOR is 0.8s behind VER",
-        timestamp = 1_000L
+    private fun sampleInsight() = RaceInsightUi(
+        id = "drs_imminent:NOR:VER",
+        icon = "🎯",
+        headline = "NOR projected to enter DRS in 2 laps",
+        detail = "closing on VER at 0.4s/lap",
+        severity = Severity.HIGH,
     )
 
     @Test
@@ -35,15 +33,15 @@ class RaceIntelligenceSectionTest {
     }
 
     @Test
-    fun displaysInsightTitleAndDescription() {
+    fun displaysInsightHeadlineAndDetail() {
         composeRule.setContent {
             ProjectApexTheme {
                 RaceIntelligenceSection(insights = listOf(sampleInsight()))
             }
         }
 
-        composeRule.onNodeWithText("NOR and VER are battling").assertExists()
-        composeRule.onNodeWithText("NOR is 0.8s behind VER").assertExists()
+        composeRule.onNodeWithText("NOR projected to enter DRS in 2 laps").assertExists()
+        composeRule.onNodeWithText("closing on VER at 0.4s/lap").assertExists()
     }
 
     @Test

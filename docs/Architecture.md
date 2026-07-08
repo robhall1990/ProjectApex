@@ -46,16 +46,19 @@ com.projectapex
 │   ├── race/          RaceEngine — owns the current RaceState
 │   ├── simulation/    RaceSimulator — generates believable fake RaceState
 │   │                   updates for UI development, sits above RaceEngine
-│   ├── timeline/      RaceTimeline — records RaceState history, lets the UI
-│   │                   browse it independently of RaceEngine's live state
-│   └── intelligence/  RaceIntelligenceEngine — deterministic rules over
-│                       RaceState producing RaceInsight (battles, gap trends,
-│                       tyre concerns, ...); no AI, no external calls
+│   └── timeline/      RaceTimeline — records RaceState history, lets the UI
+│                       browse it independently of RaceEngine's live state
+│   (race intelligence now lives in the :intelligence module — see below —
+│    driven from RaceEngine by intelligence/adapter/RacePulseEngine)
+├── intelligence/     adapter/ — RaceStateAdapter (RaceState -> TimingFrame) and
+│                     RacePulseEngine (drives the :intelligence pipeline from
+│                     RaceEngine, exposes StateFlow<RacePulse>)
 ├── feature/
 │   ├── splash/
 │   ├── race/          Screen + one RaceViewModel, combining RaceTimeline
-│   │   │               (race data + replay position) and RaceEngine ->
-│   │   │               RaceIntelligenceEngine (insights) into one RaceUiState
+│   │   │               (race data + replay position) and RacePulseEngine's
+│   │   │               RacePulse (mapped to RaceInsightUi by ObservationPresenter)
+│   │   │               into one RaceUiState
 │   │   └── components/  SessionHeader, RaceStatusBar, UnwrappedTrackView,
 │   │                     RaceIntelligenceSection, RaceInsightCard, RaceLeaderboard,
 │   │                     LeaderboardRow, PanelHeader, SectionCard, StatusChip, InfoRow
@@ -198,9 +201,10 @@ RaceSimulator -> RaceEngine -> RaceTimeline -> UI
 `RaceEngine` ever holds and lets the UI browse that history independently of
 what the engine is currently doing — the enabler for replay, historical
 analysis, and future AI explanations that read past states, not just the
-current one. `RaceViewModel` depends on `RaceTimeline` instead of
-`RaceEngine` directly. (`RaceIntelligenceViewModel` is the one exception —
-see [RaceIntelligenceEngine](#raceintelligenceengine) below for why.)
+current one. `RaceViewModel` depends on `RaceTimeline` for race data.
+(Intelligence is the one thing that reads the live `RaceEngine` directly
+rather than the timeline — see [Race intelligence](#race-intelligence) below
+for why.)
 
 - **Auto-recording, not a manually-fed buffer.** `RaceTimeline`'s `init`
   block launches its own subscription to `raceEngine.state` and calls
@@ -240,68 +244,63 @@ see [RaceIntelligenceEngine](#raceintelligenceengine) below for why.)
   needed at all for `RaceTimelineTest`, since `record`/`previous`/`next`/
   `seek`/`clear` are all plain, non-suspending functions.
 
-### RaceIntelligenceEngine
+### Race intelligence
+
+Race intelligence is the `:intelligence` module (a prediction-focused platform
+specified in [RaceIntelligencePlatform.md](RaceIntelligencePlatform.md) and
+built up over APX-010/011/012), driven from the app by `RacePulseEngine`:
 
 ```
-RaceState -> RaceIntelligenceEngine -> RaceInsight list -> Future AI explanation layer
+RaceEngine -> RaceStateAdapter -> IngestPipeline -> FeatureStore
+           -> DetectorEngine -> PrioritisationEngine -> RacePulse
+           -> RaceViewModel (ObservationPresenter) -> UI
 ```
 
-> The full-scale successor to this engine — a prediction-focused intelligence
-> platform with 26 detectors, a mathematical ranking model, deterministic
-> prediction algorithms, and an LLM narration layer — is specified in
-> [RaceIntelligencePlatform.md](RaceIntelligencePlatform.md). What follows
-> describes the v1 engine as implemented today.
+> **The legacy `RaceIntelligenceEngine` (APX-007) was removed in APX-012.**
+> Its single `analyse(RaceState): List<RaceInsight>` rule set is replaced by
+> the modular detector platform below — there is deliberately no second
+> intelligence system running in parallel.
 
-`RaceIntelligenceEngine` (`domain/intelligence/RaceIntelligenceEngine.kt`) is
-deterministic rule-based analysis — no AI model, no external call — meant as
-the foundation a future AI explanation layer reads from (`RaceInsight`s)
-rather than raw `RaceState`. `analyse(state: RaceState): List<RaceInsight>`
-runs five detectors and returns their combined output, highest
-`InsightPriority` first.
-
-- **Stateful, unlike the rest of the domain layer.** Gap-closing/increasing
-  and "fastest car" are *trends* — they need the previous state to compare
-  against, but the ticket's fixed signature only takes one `RaceState`. So
-  `RaceIntelligenceEngine` remembers the last state it was given internally
-  (`private var previousState`) and diffs against it each call. Battle
-  detection and tyre concern are stateless (computed from the current state
-  alone) and work even on the very first call.
-- **This assumes chronological input.** If fed states out of order — e.g.
-  from scrubbing a replay timeline backwards — the "previous state" would no
-  longer represent the moment immediately before the current one, and
-  gap-trend/fastest-car insights could be misleading. Not solved in v1; see
-  Limitations.
-- **This is why `RaceViewModel` reads `RaceEngine` directly for insights,
-  not `RaceTimeline`** — the one deliberate exception to "the Race screen
-  reads `RaceTimeline`, not `RaceEngine`." `RaceEngine`'s state only ever
-  advances forward in real time; `RaceTimeline` can jump anywhere via
-  `previous`/`next`/`seek`. Feeding the stateful engine from the timeline
-  would risk exactly the out-of-order problem above. The trade-off:
-  intelligence insights always describe the *live* race, never whatever
-  moment is currently being replayed. (APX-007 briefly had this split across
-  two ViewModels — `RaceViewModel` and `RaceIntelligenceViewModel` — purely
-  because `RaceUiState` hadn't been asked to carry insights yet; APX-008
-  merged them into one `RaceViewModel`/`RaceUiState`, combining both flows
-  with `combine()`, without changing which domain service feeds which
-  field.)
-- **Gap trend is measured to the leader, not the car ahead.** `CarState`
-  only carries `gapToLeaderSeconds`, so "PIA is closing on VER" means PIA's
-  gap to whoever currently holds P1 is shrinking — not necessarily the car
-  immediately in front of PIA on track.
-- **Battle detection compares adjacent *positions*, not adjacent gaps.**
-  Cars are sorted by `position` and checked pairwise
-  (`zipWithNext`); the gap compared is `abs(behind.gap - ahead.gap)`,
-  covering the "1.5 seconds" threshold regardless of which of the two has
-  the larger recorded gap (the synthetic simulator's independent per-car
-  random walk doesn't guarantee gaps stay monotonic with position).
-- **Priority/threshold values are this ticket's judgment calls**, not
-  specified by the ticket beyond "battle = 1.5 seconds, HIGH": gap-trend
-  threshold 0.3s, fastest-car minimum gain 0.1s, tyre concern at 20 laps,
-  gap-trend/tyre-concern priority MEDIUM, fastest-car priority LOW. All are
-  named constants at the top of the file, not buried magic numbers.
-- **`DRS_RANGE` has no detector.** It's in `InsightType` because the ticket's
-  enum spec includes it, but only five detectors were requested — it's
-  reserved for a future ticket.
+- **`RacePulseEngine`** (`intelligence/adapter/RacePulseEngine.kt`) is the
+  app-side orchestrator. Like `RaceTimeline`, it subscribes to the **live**
+  `RaceEngine.state` on a background dispatcher and, per state, runs the whole
+  pure pipeline — `RaceStateAdapter` → `IngestPipeline`/`FeatureStore` →
+  `DetectorEngine` (all eight combat detectors registered) →
+  `PrioritisationEngine` — publishing the result as a `StateFlow<RacePulse>`.
+  All pipeline mutation happens on the single collector coroutine, preserving
+  the platform's single-writer guarantee.
+- **It reads the live engine, never the replay timeline** — the same
+  principle the old engine followed, and for the same reason, now with real
+  teeth: the pipeline is *deeply* stateful (feature history, detector
+  continuity, novelty bookkeeping) and assumes chronological input, so
+  replay scrubbing must never reach it. `RaceViewModel` combines
+  `RaceTimeline.state` (race data + replay position) with
+  `RacePulseEngine.pulse` (always-live intelligence) into one `RaceUiState` —
+  intelligence always describes the live race, the timeline position is
+  purely a UI concern.
+- **The combat detector family (APX-012)** — eight detectors in
+  `intelligence/detect/combat/`: battle, DRS active, DRS imminent, gap
+  closing, gap increasing, leader pressure, fastest race pace, and tyre
+  concern (which also forecasts the tyre cliff). Each is an independent
+  `Detector` registered with the engine; shared maths lives in
+  `detect/analysis/` (`GapAnalysis`, `RelativePace`, `Confidence`) so
+  detectors agree on what "closing" and "pace" mean rather than each
+  re-deriving them. See [DetectionFramework.md](DetectionFramework.md) for the
+  framework and detector lifecycle.
+- **Predictive over factual.** Detectors emit predictive stories (DRS
+  imminent, tyre cliff, leader pressure) at high severity and the generic
+  precursors (gap closing/increasing) at LOW/INFO, so the ranked pulse leads
+  with *"NOR projected to enter DRS in 2 laps"* rather than *"gap closing"*.
+  Gap-closing even stays silent when the same pair is converging on DRS
+  within the horizon — that story belongs to the DRS-imminent detector.
+- **Structured facts in, prose in the app.** Observations carry numeric
+  `metadata` only (the future LLM-auditable fact payload); the English
+  sentences are composed app-side by `ObservationPresenter`
+  (`feature/race/ObservationPresenter.kt`), which maps each
+  `ScoredObservation` to a `RaceInsightUi` (icon, headline, detail, severity).
+  Formatting is `Locale.US`-pinned, so rendering is deterministic on any
+  device. This keeps `:intelligence` free of presentation concerns and the
+  Compose layer free of business logic.
 
 ### The :intelligence module (APX-010)
 
@@ -350,15 +349,17 @@ and **features** layers that every later detector/predictor ticket reads.
 APX-011 added the `detect/` and `rank/` layers on top of APX-010 — see
 [DetectionFramework.md](DetectionFramework.md) for the full description.
 In brief: an immutable `Observation` model (the internal intelligence object;
-`RaceInsight` becomes a presentation-layer rendering of it later), a
+its presentation-layer rendering is APX-012's `RaceInsightUi`, built by
+`ObservationPresenter`), a
 `Detector` SPI with **registration-only extensibility** (the `DetectorEngine`
 knows no concrete detector; it isolates failures so one throwing detector
 never stops the others, and collects per-detector metrics), and a stateful
 `PrioritisationEngine` scoring `severity · confidence · urgency · recency ·
 novelty` (all constants in `PrioritisationConfig`) with greedy diverse top-K
 selection into a `RacePulse`. Deterministic end to end: injectable clocks,
-tie-breaks by id. No concrete race detectors exist yet — that is deliberate;
-they arrive with the detector-family tickets and plug in via `register(...)`.
+tie-breaks by id. The first concrete detectors — the combat family — arrive
+in APX-012 and plug in via `register(...)`, wired to the app by
+`RacePulseEngine` (see [Race intelligence](#race-intelligence) above).
 
 ## State management
 
@@ -474,8 +475,8 @@ domain `SessionStatus` (OFFLINE/LIVE); "Simulation" shows whether
 that could diverge from a richer future data source; "Replay" only appears
 while `isReplayMode` is true; "Track"/"Weather"/"DRS" are permanent, always
 `enabled = false` placeholders. None of this required touching
-`RaceSimulator`, `RaceEngine`, or `RaceIntelligenceEngine` — every chip
-derives from data `RaceViewModel` already had.
+`RaceSimulator` or `RaceEngine` — every chip derives from data `RaceViewModel`
+already had.
 
 `UnwrappedTrackView` is explicitly a *race-distance* visualisation, not a
 geographical track map: a horizontal ribbon from START to FINISH, with each
@@ -533,21 +534,21 @@ reader. Both `RaceLeaderboard` and `UnwrappedTrackView` tolerate an empty
 a short "no active session" message instead of an empty card.
 
 `RaceIntelligenceSection` (`feature/race/components/RaceIntelligenceSection.kt`)
-renders the top 3 `RaceInsight`s as `RaceInsightCard`s separated by
-dividers — "a clean feed" — in the order `RaceIntelligenceEngine` already
-returns them (highest `InsightPriority` first; the ticket's "highest
-priority first" requirement was already satisfied by the engine itself, no
-detector logic changed). Truncation to 3 (`insights.take(3)`) stays the
-UI's job, not the engine's. `RaceInsightCard`
-(`feature/race/components/RaceInsightCard.kt`) shows an emoji keyed off
-`InsightType` (🔥 battle, 📉/📈 gap closing/increasing, ⚡ fastest car, 🎯
-DRS range, 🛞 tyre concern), the insight's title/description, and a small
-coloured dot for `InsightPriority` (error/primary/onSurfaceVariant for
-HIGH/MEDIUM/LOW — deliberately reusing already-themed colours rather than
-the unconfigured Material 3 default `tertiary`), now also carrying a content
-description ("High priority", etc.) since colour alone isn't
+renders the top 3 `RaceInsightUi`s as `RaceInsightCard`s separated by
+dividers — "a clean feed" — in the order the `RacePulse` already ranks them
+(most important first; the ranking is the `PrioritisationEngine`'s job, so the
+UI does no sorting). Truncation to 3 (`insights.take(3)`) stays the UI's job.
+`RaceInsightCard` (`feature/race/components/RaceInsightCard.kt`) shows the
+`RaceInsightUi`'s emoji icon (composed app-side by `ObservationPresenter` from
+the observation type — 🔥 battle, 🎯 DRS, 📉/📈 gap closing/increasing,
+⚠️ leader pressure, ⚡ fastest pace, 🛞 tyre), its headline/detail, and a
+small coloured dot for the observation `Severity` (error for CRITICAL/HIGH,
+primary for MEDIUM, onSurfaceVariant for LOW/INFO — reusing already-themed
+colours rather than the unconfigured Material 3 default `tertiary`), carrying
+a content description ("High priority", etc.) since colour alone isn't
 screen-reader-accessible. Same pattern as every other Race component: plain
-data in, no reference to the engine or the ViewModel.
+presentation data in, no reference to the pulse engine, detectors, or the
+ViewModel.
 
 ## Icons
 
@@ -567,19 +568,21 @@ Hilt is wired at these points:
 - `MainActivity` — `@AndroidEntryPoint`.
 - Every ViewModel — `@HiltViewModel`, obtained in Compose via
   `hiltViewModel()`.
-- `RaceEngine`, `RaceSimulator`, `RaceTimeline`, and `RaceIntelligenceEngine`
+- `RaceEngine`, `RaceSimulator`, `RaceTimeline`, and `RacePulseEngine`
   — all `@Singleton @Inject constructor(...)`, constructor-injected directly
   (no `@Module` needed for any of them — Hilt/Dagger discovers `@Inject`
-  constructors automatically). `RaceIntelligenceEngine` needs `@Singleton`
-  for more than consistency: it's stateful (remembers the previous
-  `RaceState`), so a second instance would mean a second, independent
-  "memory" of race history — there must be exactly one.
-- `core/di/DomainModule.kt` — the one Hilt `@Module` in the project so far,
-  `@InstallIn(SingletonComponent::class)`, providing the one thing that
-  *can't* be constructor-injected: a `@DefaultDispatcher`-qualified
-  `CoroutineDispatcher` (`Dispatchers.Default`), since `CoroutineDispatcher`
-  has no injectable constructor of its own. Both `RaceSimulator` and
-  `RaceTimeline` depend on this same binding.
+  constructors automatically). `RacePulseEngine` needs `@Singleton` for more
+  than consistency: it owns the deeply stateful `:intelligence` pipeline
+  (feature history, detector continuity, novelty), so a second instance would
+  mean a second, independent memory of the race — there must be exactly one.
+- `core/di/DomainModule.kt` — the one Hilt `@Module` in the project,
+  `@InstallIn(SingletonComponent::class)`, providing the things that *can't*
+  be constructor-injected: a `@DefaultDispatcher`-qualified
+  `CoroutineDispatcher` (`Dispatchers.Default`); a `Clock` (`Clock.systemUTC()`,
+  substitutable with a fixed clock in tests for deterministic scoring); and
+  the pure-Kotlin `IntelligenceConfig` (which knows nothing of Hilt).
+  `RaceSimulator`, `RaceTimeline`, and `RacePulseEngine` all depend on the
+  dispatcher binding.
 
 Retrofit, OkHttp, Room, and Coil are present as Gradle dependencies for
 future networking and persistence work, but are deliberately not wired into
@@ -590,37 +593,47 @@ there is a real API client or entity would be dead code.
 
 - **ViewModel unit tests** (`app/src/test`) — plain JUnit, no
   Android/Hilt/Compose dependency, run on the JVM. `RaceViewModelTest`
-  constructs `RaceViewModel(RaceTimeline(...), RaceEngine(), RaceIntelligenceEngine())`
-  directly (bypassing Hilt, same as the domain tests below). One test records
-  two timeline snapshots and asserts `uiState.raceState`/`isReplayMode`
-  reflect the latest one live, then flip after `previous()` — proving the
-  `combine()` of `raceTimeline.state` actually works, not just its initial
-  value. A second test proves `insights` tracks `RaceEngine`'s state
-  independently of replay position: it populates the timeline directly
-  (bypassing `RaceEngine` entirely) and confirms `insights` stays empty even
-  while `raceState` shows replayed data — the two fields genuinely come from
-  different sources, not both from wherever the timeline points. Needs
+  constructs `RaceViewModel(RaceTimeline(...), RacePulseEngine(...), ObservationPresenter())`
+  directly (bypassing Hilt). One test records two timeline snapshots and
+  asserts `uiState.raceState`/`isReplayMode` reflect the latest one live, then
+  flip after `previous()`. A second proves `insights` tracks the **live**
+  pulse independently of replay position: it scrubs the timeline to a replayed
+  snapshot *and* feeds the pulse engine a live two-car battle via
+  `RacePulseEngine.process(...)`, then confirms `raceState` shows the replayed
+  snapshot while `insights` describe the live battle — the two fields
+  genuinely come from different sources. Needs
   `Dispatchers.setMain(UnconfinedTestDispatcher())` in `@Before`/
   `resetMain()` in `@After` since `viewModelScope` needs a `Main` dispatcher
   that doesn't exist by default on the JVM.
+- **Presentation & pipeline tests** (`app/src/test`) —
+  `ObservationPresenterTest` pins the English templates (the DRS-imminent,
+  leader-pressure, and tyre-cliff example sentences) and asserts formatting is
+  `Locale.US`-independent (it sets the default locale to Germany and checks
+  the decimal separator stays a dot). `RacePulseEngineTest` is the full
+  app-side integration: it drives scripted `RaceState`s through
+  `RacePulseEngine.process(...)` (`RaceState → RaceStateAdapter → IngestPipeline
+  → DetectorEngine → PrioritisationEngine → RacePulse`) and asserts the pulse
+  leads with a meaningful, driver-specific insight — and that a *predictive*
+  DRS/leader-pressure story appears while the car is still approaching, never
+  a generic "gap closing" lead.
 - **Domain unit tests** (`app/src/test`) — `RaceEngineTest`, `RaceSimulatorTest`,
-  `RaceTimelineTest`, and `RaceIntelligenceEngineTest` construct
-  `RaceEngine()`/`RaceSimulator(...)`/`RaceTimeline(...)`/
-  `RaceIntelligenceEngine()` directly, bypassing Hilt entirely (there's no
-  Android context needed to build a pure Kotlin class). `RaceSimulatorTest`
-  passes a `StandardTestDispatcher(testScheduler)` in place of the
-  Hilt-provided `Dispatchers.Default`, so `advanceTimeBy()` fast-forwards the
-  simulator's real `delay(1_000)` tick loop under virtual time instead of the
-  test actually waiting on a wall clock. `RaceTimelineTest` passes a bare
-  `StandardTestDispatcher()` too, but for a different reason: since it's
-  never advanced, `RaceTimeline`'s `init`-block auto-subscription to
-  `RaceEngine` simply never runs, so every test can call `record()` directly
-  and reason about it in isolation, with no coroutine test machinery
-  (`runTest`, etc.) needed at all. `RaceIntelligenceEngineTest` needs no
-  coroutine setup at all — `analyse()` is a plain synchronous function — but
-  its gap-trend/fastest-car tests call `analyse()` twice on the same engine
-  instance (seeding, then asserting) to exercise the stateful comparison
-  against a previous call.
+  and `RaceTimelineTest` construct `RaceEngine()`/`RaceSimulator(...)`/
+  `RaceTimeline(...)` directly, bypassing Hilt entirely (there's no Android
+  context needed to build a pure Kotlin class). `RaceSimulatorTest` passes a
+  `StandardTestDispatcher(testScheduler)` in place of the Hilt-provided
+  `Dispatchers.Default`, so `advanceTimeBy()` fast-forwards the simulator's
+  real `delay(1_000)` tick loop under virtual time. `RaceTimelineTest` (and
+  `RacePulseEngineTest`) pass a bare `StandardTestDispatcher()` too, but for a
+  different reason: since it's never advanced, the `init`-block
+  auto-subscription to `RaceEngine` never runs, so every test can call
+  `record()`/`process()` directly and reason about it in isolation.
+- **Intelligence unit tests** (`intelligence/src/test`, plain JVM) — the
+  ingestion, features, detection, ranking, and combat-detector layers are
+  tested in the pure module with no Android at all. The combat detectors are
+  exercised against real accumulated history: `CombatSupport` drives scripted
+  frames through the actual `IngestPipeline` and hands the detector the
+  resulting `FeatureView`, so a closing-gap prediction is validated end to end
+  rather than against a mock.
 - **Compose UI / navigation tests** (`app/src/androidTest`) — use
   `createAndroidComposeRule<MainActivity>()` plus `HiltAndroidRule` for
   screens wired through Hilt, and a custom `HiltTestRunner`
@@ -641,7 +654,7 @@ there is a real API client or entity would be dead code.
   `RaceIntelligenceSectionTest`, and `RaceLeaderboardTest` all use the
   lighter `createComposeRule()` (no `MainActivity`, no Hilt) since every
   Race component takes plain parameters and needs neither. Tests that need
-  `RaceState`/`CarState`/`RaceInsight` fixtures build them inline rather
+  `RaceState`/`CarState`/`RaceInsightUi` fixtures build them inline rather
   than reusing `RaceStateFactory`, because that fixture lives in
   `app/src/test`, a different source set `androidTest` cannot see. Since
   "LIVE" can legitimately appear twice at once (the session header's status

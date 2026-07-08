@@ -42,9 +42,9 @@ Separation of concerns, deliberately hard-edged:
 
 ## The Observation model
 
-`Observation` is the internal intelligence object. `RaceInsight` (the app's
-current UI type) becomes a presentation-layer rendering of observations in a
-later ticket — nothing in this module references it.
+`Observation` is the internal intelligence object. Its presentation-layer
+rendering is the app's `RaceInsightUi`, built by `ObservationPresenter`
+(APX-012) — nothing in this module references it.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -182,8 +182,25 @@ severity into the pulse.
   same inputs and clock (both engines take injectable `java.time.Clock`s).
 
 `RacePulse.headline` is a deterministic placeholder rendering
-(`"type: A vs B"`); real presentation text arrives with the
-RaceInsight-rendering ticket, and LLM narration after that.
+(`"type: A vs B"`); the app composes real presentation text from each
+observation's numeric metadata in `ObservationPresenter` (APX-012), and LLM
+narration comes after that.
+
+## The combat detector family (APX-012)
+
+The first production detectors, in `intelligence/detect/combat/`, prove the
+framework end to end: `BattleDetector`, `DrsActiveDetector`,
+`DrsImminentDetector`, `GapClosingDetector`, `GapIncreasingDetector`,
+`LeaderPressureDetector`, `FastestPaceDetector`, and `TyreConcernDetector`
+(which also forecasts the tyre cliff). Shared maths lives in
+`detect/analysis/` (`GapAnalysis`, `RelativePace`, `Confidence`) so detectors
+agree on definitions instead of each re-deriving them. They favour predictive,
+meaningful stories over generic ones through **severity**: predictions
+(DRS imminent, tyre cliff) and high-value ongoing situations (leader pressure,
+battle) are HIGH/CRITICAL, while the bare precursors (gap closing/increasing)
+are LOW/INFO — so a ranked pulse leads with *"NOR projected to enter DRS in 2
+laps"*, not *"gap closing"*. The app registers them with a `DetectorEngine`
+inside `RacePulseEngine`; the engine still knows none of them by name.
 
 ## Extension points
 
