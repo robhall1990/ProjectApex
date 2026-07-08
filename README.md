@@ -77,8 +77,11 @@ com.projectapex.intelligence
 ├── ingest/        TimingFrame (canonical input), FrameValidator,
 │                   FrameNormaliser, IngestPipeline (the synchronous cheap path)
 ├── events/        EngineEvent, EventDeriver (snapshots → edges), EventLog
-└── features/      FeatureStore/FeatureView, lap/stint books, pace + tyre-deg
-                    models (fuel-corrected OLS), pit-loss model, TrafficProjector
+├── features/      FeatureStore/FeatureView, lap/stint books, pace + tyre-deg
+│                   models (fuel-corrected OLS), pit-loss model, TrafficProjector
+├── detect/        Observation model, Detector SPI, DetectorEngine
+│                   (registration-only extensibility, failure isolation, metrics)
+└── rank/          PrioritisationEngine (configurable scoring), RacePulse
 
 :app
 com.projectapex
@@ -111,12 +114,16 @@ com.projectapex
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
 ```
 
-The `:intelligence` module is the first implementation slice (APX-010) of the
-[Race Intelligence Platform](docs/RaceIntelligencePlatform.md): the ingestion
-and features layers everything else in that specification reads. It is
+The `:intelligence` module implements the
+[Race Intelligence Platform](docs/RaceIntelligencePlatform.md) in slices:
+APX-010 built the ingestion and features layers; APX-011 added the
+[detection framework and prioritisation engine](docs/DetectionFramework.md) —
+a registration-only detector platform (`Detector` → `DetectorEngine` →
+`Observation`s → `PrioritisationEngine` → `RacePulse`) with failure isolation,
+per-detector metrics, and configurable multiplicative scoring. It is
 deliberately a plain Kotlin/JVM module — no Android plugin — so an accidental
 `android.*` import cannot compile, and the same artifact runs on-device, in
-fast JVM tests, or server-side. Detector families, ranking, prediction, and
+fast JVM tests, or server-side. Concrete detector families, prediction, and
 narration land in later tickets on top of these foundations.
 
 `domain/` holds the race data model, `RaceEngine` (owns the current race

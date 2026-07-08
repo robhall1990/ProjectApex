@@ -32,6 +32,8 @@ data class IntelligenceConfig(
     val fallbackLapSeconds: Double = 90.0,
     val track: TrackConstants = TrackConstants(),
     val degPriors: Map<TyreCompound, DegPrior> = DEFAULT_DEG_PRIORS,
+    /** Scoring constants of the PrioritisationEngine (APX-011). */
+    val prioritisation: PrioritisationConfig = PrioritisationConfig(),
 ) {
     companion object {
         val DEFAULT_DEG_PRIORS: Map<TyreCompound, DegPrior> = mapOf(

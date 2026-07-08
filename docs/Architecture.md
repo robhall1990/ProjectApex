@@ -345,6 +345,21 @@ and **features** layers that every later detector/predictor ticket reads.
   `RaceEngine`'s flow. `IntelligenceConfig` carries every constant as data —
   per-track tuning and tests pin exact configs without code changes.
 
+### Detection framework & prioritisation (APX-011)
+
+APX-011 added the `detect/` and `rank/` layers on top of APX-010 — see
+[DetectionFramework.md](DetectionFramework.md) for the full description.
+In brief: an immutable `Observation` model (the internal intelligence object;
+`RaceInsight` becomes a presentation-layer rendering of it later), a
+`Detector` SPI with **registration-only extensibility** (the `DetectorEngine`
+knows no concrete detector; it isolates failures so one throwing detector
+never stops the others, and collects per-detector metrics), and a stateful
+`PrioritisationEngine` scoring `severity · confidence · urgency · recency ·
+novelty` (all constants in `PrioritisationConfig`) with greedy diverse top-K
+selection into a `RacePulse`. Deterministic end to end: injectable clocks,
+tie-breaks by id. No concrete race detectors exist yet — that is deliberate;
+they arrive with the detector-family tickets and plug in via `register(...)`.
+
 ## State management
 
 - **Immutable state**: every `UiState` is a `data class` with `val`
