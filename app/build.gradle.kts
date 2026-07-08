@@ -52,6 +52,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":intelligence"))
+
     implementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(platform(libs.androidx.compose.bom))
 

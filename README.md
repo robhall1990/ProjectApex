@@ -71,6 +71,16 @@ configuration is required beyond a valid `local.properties` `sdk.dir`
 ## Project structure
 
 ```
+:intelligence  (pure Kotlin/JVM module — no Android dependencies)
+com.projectapex.intelligence
+├── api/           IntelligenceConfig — every platform constant, as data
+├── ingest/        TimingFrame (canonical input), FrameValidator,
+│                   FrameNormaliser, IngestPipeline (the synchronous cheap path)
+├── events/        EngineEvent, EventDeriver (snapshots → edges), EventLog
+└── features/      FeatureStore/FeatureView, lap/stint books, pace + tyre-deg
+                    models (fuel-corrected OLS), pit-loss model, TrafficProjector
+
+:app
 com.projectapex
 ├── core/
 │   ├── theme/        Material 3 theme, color scheme, typography
@@ -94,9 +104,20 @@ com.projectapex
 │   │                     LeaderboardRow, PanelHeader, SectionCard, StatusChip, InfoRow
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
 │   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
+├── intelligence/  adapter/RaceStateAdapter — bridges RaceState into the
+│                   :intelligence module's TimingFrame (lives here because it
+│                   must see both sides; :intelligence never imports app types)
 ├── ApexApplication.kt Hilt application entry point
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
 ```
+
+The `:intelligence` module is the first implementation slice (APX-010) of the
+[Race Intelligence Platform](docs/RaceIntelligencePlatform.md): the ingestion
+and features layers everything else in that specification reads. It is
+deliberately a plain Kotlin/JVM module — no Android plugin — so an accidental
+`android.*` import cannot compile, and the same artifact runs on-device, in
+fast JVM tests, or server-side. Detector families, ranking, prediction, and
+narration land in later tickets on top of these foundations.
 
 `domain/` holds the race data model, `RaceEngine` (owns the current race
 state as a `StateFlow`), `RaceSimulator` (a development-only tool that

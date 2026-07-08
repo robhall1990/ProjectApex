@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Project Apex"
 include(":app")
+include(":intelligence")

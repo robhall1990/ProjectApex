@@ -303,6 +303,48 @@ runs five detectors and returns their combined output, highest
   enum spec includes it, but only five detectors were requested — it's
   reserved for a future ticket.
 
+### The :intelligence module (APX-010)
+
+The first implementation slice of
+[RaceIntelligencePlatform.md](RaceIntelligencePlatform.md): the **ingestion**
+and **features** layers that every later detector/predictor ticket reads.
+
+- **A separate pure Kotlin/JVM Gradle module** (`:intelligence`) with no
+  Android plugin — an accidental `android.*` import cannot compile
+  (spec §7 "enforced by the build"). Its only dependency is the stdlib; tests
+  are plain JUnit on the JVM, no emulator involved.
+- `ingest/` — `TimingFrame` is the platform's canonical input (spec §3.1),
+  richer than `RaceState` on purpose: it has slots (sectors, intervals, track
+  status, weather) that today's adapter leaves empty but a real live-timing
+  feed will fill. `FrameValidator` rejects malformed frames whole (positions
+  must form a permutation, gaps non-negative, sequences monotonic) so nothing
+  downstream ever defends against bad data; `FrameNormaliser` sorts by
+  position and derives missing intervals; `IngestPipeline` composes the
+  synchronous "cheap path" (validate → normalise → derive → store) that the
+  future coroutine actor will wrap.
+- `events/` — `EventDeriver` diffs consecutive frames into `EngineEvent`
+  edges (spec §6.1). The critical bit is `PositionChange.onTrack`, which
+  separates real overtakes from pit-cycle position changes by checking both
+  cars' pit status. Data gaps (sequence or multi-lap jumps) emit `DataGap`
+  rather than guessed history.
+- `features/` — `FeatureStore` is the single owner of derived history (lap
+  book, stint book, gap history, pit log); everything downstream reads the
+  `FeatureView` interface. The shared math (spec §9): fuel-corrected lap
+  times, MAD-based outlier flagging, OLS pace estimates, per-stint tyre-deg
+  fits with cliff detection (the linear-phase fit deliberately *excludes* the
+  candidate cliff laps — a fit polluted by them would tilt and hide their own
+  residuals), prior-scaled cliff prediction, pit-loss by track status, and
+  the `TrafficProjector` (leader-relative cumulative-time rejoin math).
+- **`RaceStateAdapter` lives in the app module** (`intelligence/adapter/`)
+  because it must see both `RaceState` and `TimingFrame`; the :intelligence
+  module never imports app types. It is stateful on purpose: it assigns
+  sequence numbers and synthesises `lastLapTime` from wall-clock deltas
+  between lap edges, because the simulator doesn't produce lap times yet.
+- **Not yet wired into the UI.** Nothing user-facing changes in APX-010; the
+  adapter is the entry point the detector-family ticket will connect to
+  `RaceEngine`'s flow. `IntelligenceConfig` carries every constant as data —
+  per-track tuning and tests pin exact configs without code changes.
+
 ## State management
 
 - **Immutable state**: every `UiState` is a `data class` with `val`
