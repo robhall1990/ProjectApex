@@ -14,6 +14,10 @@ leader pressure and rank the three most important things happening — no AI
 models, no external calls. There is still no real data source — everything on
 screen today comes from the Developer Mode simulator, not a live timing feed.
 
+See [docs/Roadmap.md](docs/Roadmap.md) for the phased route from this
+prototype to a commercial-grade product, and
+[docs/ExecutionPlan.md](docs/ExecutionPlan.md) for the ticket-level
+breakdown (APX-014 onwards) that implements it.
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
 follow. See [docs/RaceIntelligencePlatform.md](docs/RaceIntelligencePlatform.md)
