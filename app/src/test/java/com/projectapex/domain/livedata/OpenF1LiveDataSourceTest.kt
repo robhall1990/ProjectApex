@@ -42,16 +42,16 @@ class OpenF1LiveDataSourceTest {
         override suspend fun getDrivers(sessionKey: Int): List<DriverDto> =
             listOf(DriverDto(driverNumber = 1, fullName = "Max Verstappen", broadcastName = "VER", teamName = "Red Bull Racing"))
 
-        override suspend fun getPositions(sessionKey: Int): List<PositionDto> {
+        override suspend fun getPositions(sessionKey: Int, after: String?): List<PositionDto> {
             if (shouldFail) throw IOException("network down")
             pollCount++
             return listOf(PositionDto(date = "2026-07-11T14:00:00Z", driverNumber = 1, position = 1))
         }
 
-        override suspend fun getIntervals(sessionKey: Int): List<IntervalDto> =
+        override suspend fun getIntervals(sessionKey: Int, after: String?): List<IntervalDto> =
             listOf(IntervalDto(date = "2026-07-11T14:00:00Z", driverNumber = 1, gapToLeader = JsonPrimitive(0.0)))
 
-        override suspend fun getLaps(sessionKey: Int): List<LapDto> =
+        override suspend fun getLaps(sessionKey: Int, after: String?): List<LapDto> =
             listOf(LapDto(driverNumber = 1, lapNumber = 3))
 
         override suspend fun getStints(sessionKey: Int): List<StintDto> = emptyList()

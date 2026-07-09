@@ -27,6 +27,10 @@ class OpenF1RaceStateMapperTest {
     private fun driver(number: Int, name: String, team: String) =
         DriverDto(driverNumber = number, fullName = name, broadcastName = name, teamName = team)
 
+    private fun List<PositionDto>.positionsByDriver(): Map<Int, PositionDto> = associateBy { it.driverNumber }
+    private fun List<IntervalDto>.intervalsByDriver(): Map<Int, IntervalDto> = associateBy { it.driverNumber }
+    private fun List<LapDto>.lapsByDriver(): Map<Int, LapDto> = associateBy { it.driverNumber }
+
     @Test
     fun `maps a basic field into a valid strict position permutation`() {
         val drivers = listOf(
@@ -52,9 +56,9 @@ class OpenF1RaceStateMapperTest {
 
         val state = OpenF1RaceStateMapper.map(
             drivers = drivers,
-            positions = positions,
-            intervals = intervals,
-            laps = laps,
+            positions = positions.positionsByDriver(),
+            intervals = intervals.intervalsByDriver(),
+            laps = laps.lapsByDriver(),
             stints = emptyList(),
             pitStops = emptyList(),
             raceControl = emptyList(),
@@ -88,9 +92,9 @@ class OpenF1RaceStateMapperTest {
 
         val state = OpenF1RaceStateMapper.map(
             drivers = drivers,
-            positions = positions,
-            intervals = intervals,
-            laps = emptyList(),
+            positions = positions.positionsByDriver(),
+            intervals = intervals.intervalsByDriver(),
+            laps = emptyMap(),
             stints = emptyList(),
             pitStops = emptyList(),
             raceControl = emptyList(),
@@ -114,9 +118,9 @@ class OpenF1RaceStateMapperTest {
 
         val withPrevious = OpenF1RaceStateMapper.map(
             drivers = drivers,
-            positions = emptyList(),
-            intervals = intervals,
-            laps = emptyList(),
+            positions = emptyMap(),
+            intervals = intervals.intervalsByDriver(),
+            laps = emptyMap(),
             stints = emptyList(),
             pitStops = emptyList(),
             raceControl = emptyList(),
@@ -128,9 +132,9 @@ class OpenF1RaceStateMapperTest {
 
         val withoutPrevious = OpenF1RaceStateMapper.map(
             drivers = drivers,
-            positions = emptyList(),
-            intervals = intervals,
-            laps = emptyList(),
+            positions = emptyMap(),
+            intervals = intervals.intervalsByDriver(),
+            laps = emptyMap(),
             stints = emptyList(),
             pitStops = emptyList(),
             raceControl = emptyList(),
@@ -152,9 +156,9 @@ class OpenF1RaceStateMapperTest {
 
         val state = OpenF1RaceStateMapper.map(
             drivers = drivers,
-            positions = emptyList(),
-            intervals = emptyList(),
-            laps = laps,
+            positions = emptyMap(),
+            intervals = emptyMap(),
+            laps = laps.lapsByDriver(),
             stints = stints,
             pitStops = emptyList(),
             raceControl = emptyList(),
@@ -177,9 +181,9 @@ class OpenF1RaceStateMapperTest {
 
         val state = OpenF1RaceStateMapper.map(
             drivers = drivers,
-            positions = emptyList(),
-            intervals = emptyList(),
-            laps = emptyList(),
+            positions = emptyMap(),
+            intervals = emptyMap(),
+            laps = emptyMap(),
             stints = stints,
             pitStops = emptyList(),
             raceControl = emptyList(),
@@ -202,13 +206,13 @@ class OpenF1RaceStateMapperTest {
         )
 
         val recent = OpenF1RaceStateMapper.map(
-            drivers, emptyList(), emptyList(), emptyList(), emptyList(),
+            drivers, emptyMap(), emptyMap(), emptyMap(), emptyList(),
             recentPit, emptyList(), 58, null, now,
         )
         assertTrue(recent.cars.single().isInPitLane)
 
         val stale = OpenF1RaceStateMapper.map(
-            drivers, emptyList(), emptyList(), emptyList(), emptyList(),
+            drivers, emptyMap(), emptyMap(), emptyMap(), emptyList(),
             stalePit, emptyList(), 58, null, now,
         )
         assertFalse(stale.cars.single().isInPitLane)
@@ -244,9 +248,9 @@ class OpenF1RaceStateMapperTest {
     fun `empty inputs produce no crash and a sensible empty state`() {
         val state = OpenF1RaceStateMapper.map(
             drivers = emptyList(),
-            positions = emptyList(),
-            intervals = emptyList(),
-            laps = emptyList(),
+            positions = emptyMap(),
+            intervals = emptyMap(),
+            laps = emptyMap(),
             stints = emptyList(),
             pitStops = emptyList(),
             raceControl = emptyList(),
@@ -264,9 +268,9 @@ class OpenF1RaceStateMapperTest {
     private fun trackStatusFor(raceControl: List<RaceControlDto>): TrackStatus =
         OpenF1RaceStateMapper.map(
             drivers = listOf(driver(1, "Max Verstappen", "Red Bull Racing")),
-            positions = emptyList(),
-            intervals = emptyList(),
-            laps = emptyList(),
+            positions = emptyMap(),
+            intervals = emptyMap(),
+            laps = emptyMap(),
             stints = emptyList(),
             pitStops = emptyList(),
             raceControl = raceControl,

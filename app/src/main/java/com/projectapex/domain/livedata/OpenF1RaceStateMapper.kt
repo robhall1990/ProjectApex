@@ -33,6 +33,12 @@ import java.time.OffsetDateTime
  * Gap-to-leader falls back to [previousState]'s last-known value when
  * OpenF1 reports a non-numeric gap (e.g. `"+1 LAP"` for lapped cars) or no
  * record at all, rather than guessing.
+ *
+ * [positions], [intervals] and [laps] are the already latest-per-driver
+ * views maintained by [com.projectapex.data.openf1.LiveSessionCache] (APX-015)
+ * rather than raw endpoint payloads — a driver absent from this poll's
+ * response simply keeps whatever the cache last saw, which is exactly the
+ * "no new records this poll" case this mapper needs to tolerate anyway.
  */
 object OpenF1RaceStateMapper {
 
@@ -40,9 +46,9 @@ object OpenF1RaceStateMapper {
 
     fun map(
         drivers: List<DriverDto>,
-        positions: List<PositionDto>,
-        intervals: List<IntervalDto>,
-        laps: List<LapDto>,
+        positions: Map<Int, PositionDto>,
+        intervals: Map<Int, IntervalDto>,
+        laps: Map<Int, LapDto>,
         stints: List<StintDto>,
         pitStops: List<PitDto>,
         raceControl: List<RaceControlDto>,
@@ -53,9 +59,7 @@ object OpenF1RaceStateMapper {
         val trackStatus = deriveTrackStatus(raceControl)
 
         val driverNumbers = drivers.map { it.driverNumber }.toSet().ifEmpty {
-            (positions.map { it.driverNumber } +
-                intervals.map { it.driverNumber } +
-                laps.map { it.driverNumber }).toSet()
+            (positions.keys + intervals.keys + laps.keys)
         }
         if (driverNumbers.isEmpty()) {
             return RaceState(
@@ -69,10 +73,6 @@ object OpenF1RaceStateMapper {
         }
 
         val driverByNumber = drivers.associateBy { it.driverNumber }
-        val latestPosition = latestByDriver(positions) { it.driverNumber }
-        val latestInterval = latestByDriver(intervals) { it.driverNumber }
-        val latestLap = laps.groupBy { it.driverNumber }
-            .mapValues { (_, records) -> records.maxByOrNull { it.lapNumber } }
         val currentStint = stints.groupBy { it.driverNumber }
             .mapValues { (_, records) -> records.firstOrNull { it.lapEnd == null } ?: records.maxByOrNull { it.stintNumber } }
         val latestPit = latestByDriver(pitStops) { it.driverNumber }
@@ -82,9 +82,9 @@ object OpenF1RaceStateMapper {
             buildRawCar(
                 number = number,
                 driverDto = driverByNumber[number],
-                lap = latestLap[number]?.lapNumber ?: 0,
-                parsedGap = latestInterval[number]?.gapToLeader.asGapSeconds(),
-                sortPosition = latestPosition[number]?.position ?: Int.MAX_VALUE,
+                lap = laps[number]?.lapNumber ?: 0,
+                parsedGap = intervals[number]?.gapToLeader.asGapSeconds(),
+                sortPosition = positions[number]?.position ?: Int.MAX_VALUE,
                 stint = currentStint[number],
                 pitInstant = latestPit[number]?.date?.let(::parseInstant),
                 previousGap = previousById[number.toString()]?.gapToLeaderSeconds,
