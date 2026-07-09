@@ -15,6 +15,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -29,6 +30,7 @@ import org.junit.Test
 class OpenF1LiveDataSourceTest {
 
     private val fixedClock: Clock = Clock.fixed(Instant.parse("2026-07-11T14:00:05Z"), ZoneOffset.UTC)
+    private val alwaysForeground = MutableStateFlow(true)
 
     private class FakeOpenF1Api(
         private val sessionKey: Int = 42,
@@ -65,7 +67,7 @@ class OpenF1LiveDataSourceTest {
     fun `starts, resolves the session, and updates the race engine with live data`() = runTest {
         val engine = RaceEngine()
         val api = FakeOpenF1Api()
-        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock)
+        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock, alwaysForeground)
 
         source.start(totalLaps = 58)
         runCurrent()
@@ -84,7 +86,7 @@ class OpenF1LiveDataSourceTest {
     fun `a failed poll keeps the last good state and surfaces an error status`() = runTest {
         val engine = RaceEngine()
         val api = FakeOpenF1Api()
-        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock)
+        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock, alwaysForeground)
 
         source.start(totalLaps = 58)
         runCurrent()
@@ -105,7 +107,7 @@ class OpenF1LiveDataSourceTest {
     fun `stop halts polling and further engine updates`() = runTest {
         val engine = RaceEngine()
         val api = FakeOpenF1Api()
-        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock)
+        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock, alwaysForeground)
 
         source.start(totalLaps = 58)
         runCurrent()
@@ -118,5 +120,55 @@ class OpenF1LiveDataSourceTest {
         assertFalse(source.isRunning.value)
         assertEquals(ConnectionStatus.Idle, source.connectionStatus.value)
         assertEquals(stateAtStop, engine.state.value)
+    }
+
+    @Test
+    fun `backgrounding suspends polling and foregrounding resumes it immediately`() = runTest {
+        val engine = RaceEngine()
+        val api = FakeOpenF1Api()
+        val isForeground = MutableStateFlow(true)
+        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock, isForeground)
+
+        source.start(totalLaps = 58)
+        runCurrent()
+        assertEquals(1, api.pollCount)
+
+        isForeground.value = false
+        advanceTimeBy(20_000)
+        runCurrent()
+
+        assertEquals(1, api.pollCount) // no polling while backgrounded, however long it lasts
+
+        isForeground.value = true
+        runCurrent()
+
+        assertEquals(2, api.pollCount) // resumes immediately, no waiting out the rest of an interval
+        assertEquals(ConnectionStatus.Live, source.connectionStatus.value)
+        assertTrue(source.isRunning.value)
+
+        source.stop()
+    }
+
+    @Test
+    fun `backgrounding before the first poll withholds session resolution too`() = runTest {
+        val engine = RaceEngine()
+        val api = FakeOpenF1Api()
+        val isForeground = MutableStateFlow(false)
+        val source = OpenF1LiveDataSource(engine, api, StandardTestDispatcher(testScheduler), fixedClock, isForeground)
+
+        source.start(totalLaps = 58)
+        advanceTimeBy(20_000)
+        runCurrent()
+
+        assertEquals(0, api.pollCount)
+        assertEquals(ConnectionStatus.Connecting, source.connectionStatus.value)
+
+        isForeground.value = true
+        runCurrent()
+
+        assertEquals(1, api.pollCount)
+        assertEquals(ConnectionStatus.Live, source.connectionStatus.value)
+
+        source.stop()
     }
 }

@@ -3,6 +3,7 @@ package com.projectapex.domain.livedata
 import com.projectapex.data.openf1.DriverDto
 import com.projectapex.data.openf1.LiveSessionCache
 import com.projectapex.data.openf1.OpenF1Api
+import com.projectapex.domain.AppForegroundState
 import com.projectapex.domain.DefaultDispatcher
 import com.projectapex.domain.race.RaceEngine
 import java.time.Clock
@@ -20,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -45,6 +47,12 @@ sealed interface ConnectionStatus {
  * [com.projectapex.domain.model.RaceState] stays on screen — and applies
  * capped exponential backoff before the next attempt, surfaced via
  * [connectionStatus].
+ *
+ * The poll loop idles (no network calls) whenever [isForeground] is false —
+ * a backgrounded app gets zero polling cost. The session stays "started"
+ * throughout; [connectionStatus] simply stops updating until the app
+ * returns to the foreground, at which point the next poll fires
+ * immediately (APX-016).
  */
 @Singleton
 class OpenF1LiveDataSource @Inject constructor(
@@ -52,6 +60,7 @@ class OpenF1LiveDataSource @Inject constructor(
     private val api: OpenF1Api,
     @DefaultDispatcher private val dispatcher: CoroutineDispatcher,
     private val clock: Clock,
+    @AppForegroundState private val isForeground: StateFlow<Boolean>,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -76,6 +85,7 @@ class OpenF1LiveDataSource @Inject constructor(
             var failures = 0
 
             while (isActive) {
+                isForeground.first { it }
                 try {
                     if (sessionKey == null) {
                         val key = api.getSessions().firstOrNull()?.sessionKey
