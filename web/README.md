@@ -1,4 +1,4 @@
-# Apex Live — the zero-faff F1 gaps & insights MVP
+# Project Velocity — the zero-faff F1 gaps & insights app
 
 One self-contained web page: **`index.html`**. No build step, no install, no Android Studio.
 Open it on Windows, your phone, anywhere with a browser.
@@ -23,14 +23,16 @@ python -m http.server 8000     # then open http://localhost:8000
 ```
 
 On your Android phone: host it (GitHub Pages, see below) and open the URL in Chrome →
-menu → **Add to Home screen**. Behaves like an app.
+menu → **Add to Home screen**. It ships a PWA manifest, so it installs fullscreen with
+its own icon — behaves like a native app.
 
 ## What you get
 
 | Panel | What it shows |
 |---|---|
-| **Timing board** | Position, gap to leader, interval, last lap, tyre compound + age, pit count. In practice/quali: best lap + delta ordering. |
+| **Timing board** | Position (with ▲▼ places gained/lost), gap to leader, interval, last lap (purple = session best, green = personal best), tyre compound + age, pit count. In practice/quali: best lap + delta ordering. Click any driver to follow them across every panel. |
 | **Track gaps** | The field laid out on a strip where distance = time gap (√ scale so battles stay readable). |
+| **Weather** | Track/air temperature and rain in the header, straight from the circuit. |
 | **Race intelligence** | Auto-detected battles, drivers closing in, tyre-offset threats, tyre cliffs, pit stops, overtakes, safety cars and flags. |
 | **✦ Ask Claude** | Sends the current timing snapshot to Claude for a strategist's read (undercut windows, threats, what to watch). Needs your own Anthropic API key (Settings ⚙︎). |
 | **Race trace** | Every driver's gap to the leader's average pace, lap by lap — the chart that shows the *whole* race shape. Hover for per-lap gaps. |

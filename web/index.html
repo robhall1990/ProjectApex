@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Apex Live — F1 Gaps &amp; Insights</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏎️%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#0b0e14">
+<title>Project Velocity — F1 Gaps &amp; Insights</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.json">
 <style>
   :root {
     --bg: #0b0e14;
@@ -89,7 +91,10 @@
   table.board th:nth-child(1), table.board th:nth-child(2) { text-align: left; }
   table.board td { padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); text-align: right; font-family: var(--mono); font-size: 13px; }
   table.board td.drv { text-align: left; font-family: inherit; }
+  table.board tbody tr { cursor: pointer; }
   table.board tr:hover td { background: rgba(255,255,255,0.03); }
+  table.board tr.sel td { background: rgba(225,6,0,0.10); }
+  .delta { font-size: 10px; font-weight: 700; vertical-align: 1px; }
   .pos { color: var(--ink2); width: 28px; text-align: right; }
   .tla { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
   .teambar { display: inline-block; width: 4px; height: 15px; border-radius: 2px; }
@@ -159,7 +164,7 @@
 <body>
 
 <header>
-  <div class="brand">APEX <em>LIVE</em></div>
+  <div class="brand">PROJECT <em>VELOCITY</em></div>
   <div class="picker">
     <select id="selYear" aria-label="Season"></select>
     <select id="selMeeting" aria-label="Grand Prix"></select>
@@ -171,6 +176,7 @@
     <span class="chip" id="chipMode">idle</span>
     <span class="chip" id="chipLap" style="display:none"></span>
     <span class="chip" id="chipFlag" style="display:none"></span>
+    <span class="chip" id="chipWx" style="display:none"></span>
     <span class="chip" id="chipClock" style="display:none"></span>
     <button class="btn" id="btnSettings" title="Settings">⚙︎</button>
   </div>
@@ -305,17 +311,22 @@ function teamColor(hex) {
 }
 
 /* ============================== config ============================== */
+// one-time migration from the pre-rename "apex.*" keys
+for (const k of ["of1Token", "anthropicKey", "model", "autoAI", "pollSec"]) {
+  const old = localStorage.getItem("apex." + k);
+  if (old != null && localStorage.getItem("velocity." + k) == null) localStorage.setItem("velocity." + k, old);
+}
 const cfg = {
-  get of1Token()      { return localStorage.getItem("apex.of1Token") || ""; },
-  set of1Token(v)     { localStorage.setItem("apex.of1Token", v); },
-  get anthropicKey()  { return localStorage.getItem("apex.anthropicKey") || ""; },
-  set anthropicKey(v) { localStorage.setItem("apex.anthropicKey", v); },
-  get model()         { return localStorage.getItem("apex.model") || "claude-opus-4-8"; },
-  set model(v)        { localStorage.setItem("apex.model", v); },
-  get autoAI()        { return localStorage.getItem("apex.autoAI") === "1"; },
-  set autoAI(v)       { localStorage.setItem("apex.autoAI", v ? "1" : "0"); },
-  get pollSec()       { return Math.max(3, parseInt(localStorage.getItem("apex.pollSec") || "5", 10)); },
-  set pollSec(v)      { localStorage.setItem("apex.pollSec", String(v)); },
+  get of1Token()      { return localStorage.getItem("velocity.of1Token") || ""; },
+  set of1Token(v)     { localStorage.setItem("velocity.of1Token", v); },
+  get anthropicKey()  { return localStorage.getItem("velocity.anthropicKey") || ""; },
+  set anthropicKey(v) { localStorage.setItem("velocity.anthropicKey", v); },
+  get model()         { return localStorage.getItem("velocity.model") || "claude-opus-4-8"; },
+  set model(v)        { localStorage.setItem("velocity.model", v); },
+  get autoAI()        { return localStorage.getItem("velocity.autoAI") === "1"; },
+  set autoAI(v)       { localStorage.setItem("velocity.autoAI", v ? "1" : "0"); },
+  get pollSec()       { return Math.max(3, parseInt(localStorage.getItem("velocity.pollSec") || "5", 10)); },
+  set pollSec(v)      { localStorage.setItem("velocity.pollSec", String(v)); },
 };
 const API_BASE = new URLSearchParams(location.search).get("api") || "https://api.openf1.org/v1";
 
@@ -339,6 +350,9 @@ const S = {
   chequered: false,
   maxLap: 0,
   totalLaps: null,
+  weather: null,                   // latest weather row
+  firstPos: new Map(),             // n -> position at first sighting (≈ grid)
+  focus: null,                     // driver_number highlighted across all views
   insights: [],
   seenInsightKeys: new Map(),      // key -> expiry ts
   cursors: {},
@@ -355,6 +369,7 @@ function resetData() {
     latestPos: new Map(), posDate: new Map(), laps: new Map(), bestLap: new Map(),
     sessionBest: null, stints: new Map(), pits: new Map(), raceControl: [],
     flag: null, chequered: false, maxLap: 0, totalLaps: null,
+    weather: null, firstPos: new Map(), focus: null,
     insights: [], seenInsightKeys: new Map(), cursors: {}, pollCount: 0, backoff: 0,
   });
   $("#aiFeed").innerHTML = "";
@@ -395,8 +410,11 @@ function ingest(batch, opts = {}) {
     if (h.length > 240) h.splice(0, h.length - 240);
   }
 
+  if (batch.weather && batch.weather.length) S.weather = batch.weather[batch.weather.length - 1];
+
   if (batch.position) for (const r of batch.position) {
     const prev = S.latestPos.get(r.driver_number);
+    if (!S.firstPos.has(r.driver_number)) S.firstPos.set(r.driver_number, r.position);
     if (!S.posDate.has(r.driver_number) || Date.parse(r.date) >= S.posDate.get(r.driver_number)) {
       S.latestPos.set(r.driver_number, r.position);
       S.posDate.set(r.driver_number, Date.parse(r.date));
@@ -508,11 +526,13 @@ function computeRows() {
     for (const { n, pos } of entries) {
       const iv = S.latestInterval.get(n);
       const last = lastLapOf(n);
+      const first = S.firstPos.get(n);
       rows.push({
         n, pos, gap: pos === 1 ? "LEADER" : (iv ? iv.gap_to_leader : null),
         interval: pos === 1 ? "" : (iv ? iv.interval : null),
         last: last?.lap_duration ?? null, best: S.bestLap.get(n)?.duration ?? null,
         tyre: tyreInfo(n), pits: (S.pits.get(n) || []).length,
+        posDelta: (first != null && pos < 99) ? first - pos : null,
       });
     }
   } else {
@@ -559,6 +579,15 @@ function renderHeader() {
     flagChip.textContent = S.flag === "SC" ? "SAFETY CAR" : S.flag === "VSC" ? "VIRTUAL SC" : S.flag + " FLAG";
   } else flagChip.style.display = "none";
 
+  const wx = $("#chipWx");
+  if (S.weather && (S.weather.track_temperature != null || S.weather.air_temperature != null)) {
+    wx.style.display = "";
+    const bits = [];
+    if (S.weather.track_temperature != null) bits.push(`trk ${Math.round(S.weather.track_temperature)}°`);
+    if (S.weather.air_temperature != null) bits.push(`air ${Math.round(S.weather.air_temperature)}°`);
+    wx.textContent = "🌡 " + bits.join(" · ") + (S.weather.rainfall > 0 ? " · 🌧 rain" : "");
+  } else wx.style.display = "none";
+
   const t = $("#boardTitle");
   if (S.session) {
     t.textContent = `${S.session.session_name || "Session"} — ${S.session.circuit_short_name || S.session.country_name || ""}`;
@@ -569,17 +598,30 @@ function renderBoard(rows) {
   const thead = $("#board thead"), tbody = $("#board tbody");
   const has = rows.some(r => r.last != null || r.gap != null || S.latestPos.size > 0);
   $("#boardEmpty").style.display = (rows.length && has) ? "none" : "block";
+  const EPS = 0.0005;
+  const lapCls = r => {
+    if (r.last == null) return "";
+    if (S.sessionBest && Math.abs(r.last - S.sessionBest.duration) < EPS) return "best";
+    if (r.best != null && Math.abs(r.last - r.best) < EPS) return "pb";
+    return "";
+  };
+  const drvCell = (r, d) => {
+    const delta = r.posDelta;
+    const arrow = (delta != null && delta !== 0)
+      ? ` <span class="delta ${delta > 0 ? "up" : "down"}">${delta > 0 ? "▲" : "▼"}${Math.abs(delta)}</span>` : "";
+    return `<td class="drv" title="${esc(d.full_name || "")} — ${esc(d.team_name || "")}">
+      <span class="tla"><span class="teambar" style="background:${teamColor(d.team_colour)}"></span>${esc(tla(r.n))}${arrow}</span></td>`;
+  };
   if (S.isRace) {
     thead.innerHTML = "<tr><th>P</th><th>Driver</th><th>Gap</th><th>Int</th><th>Last</th><th>Tyre</th><th>Pit</th></tr>";
     tbody.innerHTML = rows.map(r => {
       const d = S.drivers.get(r.n) || {};
-      const isFL = S.sessionBest && S.sessionBest.n === r.n;
-      return `<tr>
+      return `<tr data-n="${r.n}" class="${S.focus === r.n ? "sel" : ""}">
         <td class="pos">${r.pos < 99 ? r.pos : "—"}</td>
-        <td class="drv"><span class="tla"><span class="teambar" style="background:${teamColor(d.team_colour)}"></span>${esc(tla(r.n))}</span></td>
+        ${drvCell(r, d)}
         <td>${r.gap === "LEADER" ? '<span style="color:var(--muted)">Leader</span>' : esc(fmtGap(r.gap))}</td>
         <td>${esc(fmtGap(r.interval))}</td>
-        <td class="${isFL ? "best" : ""}">${fmtLap(r.last)}</td>
+        <td class="${lapCls(r)}">${fmtLap(r.last)}</td>
         <td><span class="tyre ${r.tyre.cls}">${r.tyre.letter}${r.tyre.age != null ? " " + r.tyre.age : ""}</span></td>
         <td>${r.pits || 0}</td>
       </tr>`;
@@ -589,9 +631,9 @@ function renderBoard(rows) {
     tbody.innerHTML = rows.map(r => {
       const d = S.drivers.get(r.n) || {};
       const isFL = S.sessionBest && S.sessionBest.n === r.n;
-      return `<tr>
+      return `<tr data-n="${r.n}" class="${S.focus === r.n ? "sel" : ""}">
         <td class="pos">${r.pos}</td>
-        <td class="drv"><span class="tla"><span class="teambar" style="background:${teamColor(d.team_colour)}"></span>${esc(tla(r.n))}</span></td>
+        ${drvCell(r, d)}
         <td class="${isFL ? "best" : ""}">${fmtLap(r.best)}</td>
         <td>${r.gap === "FASTEST" ? '<span style="color:var(--muted)">—</span>' : esc(fmtGap(r.gap))}</td>
         <td>${fmtLap(r.last)}</td>
@@ -601,6 +643,14 @@ function renderBoard(rows) {
     }).join("");
   }
 }
+
+$("#board tbody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-n]");
+  if (!tr) return;
+  const n = parseInt(tr.dataset.n, 10);
+  S.focus = S.focus === n ? null : n;
+  render();
+});
 
 /* Gap ladder: position along the strip = √(gap / max gap), so midfield squabbles stay readable. */
 function renderLadder(rows) {
@@ -629,9 +679,11 @@ function renderLadder(rows) {
     const d = S.drivers.get(r.n) || {};
     const col = teamColor(d.team_colour);
     const yLab = lane === 0 ? y0 - 16 : lane === 1 ? y0 - 40 : y0 - 62;
-    svg += `<g><title>P${r.pos} ${esc(tla(r.n))} ${r.pos === 1 ? "leader" : "+" + (num(r.gap) ?? 0).toFixed(1) + "s"}</title>
+    const focused = S.focus === r.n;
+    const dim = S.focus != null && !focused;
+    svg += `<g opacity="${dim ? 0.3 : 1}"><title>P${r.pos} ${esc(tla(r.n))} ${r.pos === 1 ? "leader" : "+" + (num(r.gap) ?? 0).toFixed(1) + "s"}</title>
       <line x1="${x}" y1="${yLab + 5}" x2="${x}" y2="${y0}" stroke="rgba(255,255,255,0.15)"/>
-      <circle cx="${x}" cy="${y0}" r="6.5" fill="${col}" stroke="#0b0e14" stroke-width="2"/>
+      <circle cx="${x}" cy="${y0}" r="${focused ? 8 : 6.5}" fill="${col}" stroke="${focused ? "#e8ecf3" : "#0b0e14"}" stroke-width="2"/>
       <text x="${x}" y="${yLab}" fill="#e8ecf3" font-size="11.5" font-weight="700" text-anchor="middle">${esc(tla(r.n))}</text></g>`;
   }
   $("#ladder").innerHTML = svg;
@@ -708,17 +760,23 @@ function renderTrace() {
     ctx.moveTo(xOf(trace.hoverLap), padT); ctx.lineTo(xOf(trace.hoverLap), h - padB); ctx.stroke();
   }
 
-  // lines — team colour, second car of a team dashed
+  // lines — team colour, second car of a team dashed; focused driver drawn last & bold
   const teamSeen = new Map();
   const bySeries = [...data.series].sort((a, b) => (S.latestPos.get(a.n) ?? 99) - (S.latestPos.get(b.n) ?? 99));
+  if (S.focus != null) {
+    const i = bySeries.findIndex(s => s.n === S.focus);
+    if (i >= 0) bySeries.push(bySeries.splice(i, 1)[0]);
+  }
   const labels = [];
   for (const s of bySeries) {
     const d = S.drivers.get(s.n) || {};
     const team = d.team_name || String(s.n);
     const nth = (teamSeen.get(team) || 0); teamSeen.set(team, nth + 1);
+    const focused = S.focus === s.n;
+    ctx.globalAlpha = (S.focus != null && !focused) ? 0.22 : 1;
     ctx.strokeStyle = teamColor(d.team_colour);
-    ctx.lineWidth = 2;
-    ctx.setLineDash(nth ? [6, 4] : []);
+    ctx.lineWidth = focused ? 3 : 2;
+    ctx.setLineDash(nth && !focused ? [6, 4] : nth ? [8, 5] : []);
     ctx.beginPath();
     let started = false, lastPt = null;
     for (const p of s.pts) {
@@ -727,8 +785,9 @@ function renderTrace() {
       lastPt = { x, y };
     }
     ctx.stroke(); ctx.setLineDash([]);
-    if (lastPt) labels.push({ y: lastPt.y, text: tla(s.n), col: teamColor(d.team_colour) });
+    if (lastPt) labels.push({ y: lastPt.y, text: tla(s.n), col: teamColor(d.team_colour), dim: S.focus != null && !focused });
   }
+  ctx.globalAlpha = 1;
   // direct labels: push apart top-down, then re-pack bottom-up so the stack stays on the canvas
   labels.sort((a, b) => a.y - b.y);
   for (let i = 1; i < labels.length; i++) if (labels[i].y - labels[i - 1].y < 12) labels[i].y = labels[i - 1].y + 12;
@@ -738,7 +797,11 @@ function renderTrace() {
     for (let i = labels.length - 2; i >= 0; i--) if (labels[i].y > labels[i + 1].y - 12) labels[i].y = labels[i + 1].y - 12;
   }
   ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.font = "700 11px system-ui, sans-serif";
-  for (const L of labels) { ctx.fillStyle = L.col; ctx.fillText(L.text, w - padR + 6, Math.max(padT, L.y)); }
+  for (const L of labels) {
+    ctx.globalAlpha = L.dim ? 0.35 : 1;
+    ctx.fillStyle = L.col; ctx.fillText(L.text, w - padR + 6, Math.max(padT, L.y));
+  }
+  ctx.globalAlpha = 1;
 
   trace.geom = { padL, padR, padT, padB, w, h, vmin, vmax, xOf, yOf };
 }
@@ -848,17 +911,28 @@ function runDetectors() {
 setInterval(() => { if (S.mode === "live" || S.mode === "demo") { runDetectors(); } }, 10000);
 
 /* ============================== Claude insights ============================== */
+function avgRecentPace(n, k = 3) {
+  const m = S.laps.get(n);
+  if (!m) return null;
+  const ds = [...m.values()]
+    .filter(r => num(r.lap_duration) && !r.is_pit_out_lap)
+    .sort((a, b) => a.lap_number - b.lap_number)
+    .slice(-k).map(r => r.lap_duration);
+  return ds.length === k ? ds.reduce((a, b) => a + b, 0) / k : null;
+}
+
 function buildBrief() {
   const rows = computeRows().slice(0, 12);
   const lines = [];
   const s = S.session || {};
   lines.push(`Session: ${s.session_name || "?"} at ${s.circuit_short_name || s.country_name || "?"} (${s.year || ""})`);
   if (S.isRace) lines.push(`Lap ${S.maxLap}${S.totalLaps ? "/" + S.totalLaps : ""}${S.chequered ? " — chequered flag" : ""}${S.flag ? " — " + S.flag : ""}`);
+  if (S.weather) lines.push(`Weather: track ${S.weather.track_temperature ?? "?"}°C, air ${S.weather.air_temperature ?? "?"}°C${S.weather.rainfall > 0 ? ", RAIN" : ""}`);
   lines.push("");
-  lines.push(S.isRace ? "Pos | Drv | Gap | Int | Tyre(age) | Pits | Last" : "Pos | Drv | Best | Gap | Laps");
+  lines.push(S.isRace ? "Pos | Drv | Gap | Int | Tyre(age) | Pits | Avg last 3 laps" : "Pos | Drv | Best | Gap | Laps");
   for (const r of rows) {
     const d = S.drivers.get(r.n) || {};
-    if (S.isRace) lines.push(`P${r.pos} ${tla(r.n)} (${d.team_name || "?"}) | ${r.gap === "LEADER" ? "leader" : fmtGap(r.gap)} | ${fmtGap(r.interval)} | ${r.tyre.compound || "?"}(${r.tyre.age ?? "?"}) | pits:${r.pits} | ${fmtLap(r.last)}`);
+    if (S.isRace) lines.push(`P${r.pos} ${tla(r.n)} (${d.team_name || "?"}) | ${r.gap === "LEADER" ? "leader" : fmtGap(r.gap)} | ${fmtGap(r.interval)} | ${r.tyre.compound || "?"}(${r.tyre.age ?? "?"}) | pits:${r.pits} | ${fmtLap(avgRecentPace(r.n))}`);
     else lines.push(`P${r.pos} ${tla(r.n)} (${d.team_name || "?"}) | ${fmtLap(r.best)} | ${r.gap === "FASTEST" ? "-" : fmtGap(r.gap)} | ${r.lapsRun} laps`);
   }
   if (S.sessionBest) lines.push(`\nFastest lap: ${tla(S.sessionBest.n)} ${fmtLap(S.sessionBest.duration)} (lap ${S.sessionBest.lap})`);
@@ -1079,6 +1153,7 @@ async function pollTick() {
     }
     if (S.pollCount % 6 === 1) {
       jobs.push(of("/stints", { session_key: S.session.session_key }).then(r => batch.stints = r).catch(swallow));
+      jobs.push(of("/weather", { session_key: S.session.session_key }).then(r => batch.weather = r).catch(swallow));
     }
     await Promise.all(jobs);
     if (ep !== S.epoch) return;
@@ -1099,15 +1174,16 @@ async function startReplay(sessionKey, ep) {
   const key = { session_key: sessionKey };
   let data;
   try {
-    const [intervals, position, laps, stints, pit, race_control] = await Promise.all([
+    const [intervals, position, laps, stints, pit, race_control, weather] = await Promise.all([
       S.isRace ? of("/intervals", key).catch(() => []) : Promise.resolve([]),
       of("/position", key).catch(() => []),
       of("/laps", key).catch(() => []),
       of("/stints", key).catch(() => []),
       of("/pit", key).catch(() => []),
       of("/race_control", key).catch(() => []),
+      of("/weather", key).catch(() => []),
     ]);
-    data = { intervals, position, laps, stints, pit, race_control };
+    data = { intervals, position, laps, stints, pit, race_control, weather };
   } catch (e) { apiTrouble(e); return; }
   if (ep !== S.epoch) return;   // user switched away while we were loading
   banner(null);
@@ -1119,6 +1195,7 @@ async function startReplay(sessionKey, ep) {
   push(data.laps, "laps", "date_start");
   push(data.pit, "pit", "date");
   push(data.race_control, "race_control", "date");
+  push(data.weather, "weather", "date");
   log.sort((a, b) => a.t - b.t);
   if (!log.length) { banner("No timing data available for this session yet — OpenF1 usually publishes shortly after the chequered flag."); return; }
   // stints have no timestamps — apply lazily by lap
@@ -1140,7 +1217,7 @@ function seekReplay(t) {
     ingest({ drivers, stints }, { silent: true });
     R.ptr = 0;
   }
-  const batch = { intervals: [], position: [], laps: [], pit: [], race_control: [] };
+  const batch = { intervals: [], position: [], laps: [], pit: [], race_control: [], weather: [] };
   while (R.ptr < R.log.length && R.log[R.ptr].t <= t) { const e = R.log[R.ptr++]; batch[e.type].push(e.r); }
   const backfill = (t - R.t0) < 1000 || batch.position.length + batch.laps.length > 400;
   ingest(batch, { silent: backfill });
@@ -1198,8 +1275,9 @@ const DEMO_GRID = [
 function startDemo() {
   stopEngines(); resetData();
   S.mode = "demo";
-  S.session = { session_name: "Demo Race", session_type: "Race", circuit_short_name: "Apexville", country_name: "Demoland", year: new Date().getFullYear(), session_key: 0 };
+  S.session = { session_name: "Demo Race", session_type: "Race", circuit_short_name: "Velocity Park", country_name: "Demoland", year: new Date().getFullYear(), session_key: 0 };
   S.isRace = true; S.totalLaps = 30;
+  S.weather = { air_temperature: 24, track_temperature: 41, rainfall: 0 };
   banner(null);
 
   const t0 = Date.now();

@@ -34,7 +34,7 @@ const GRID = [
   [14, "ALO", "Fernando Alonso", "Aston Martin",    "229971", 92.9],
 ];
 
-const DB = { drivers: [], intervals: [], position: [], laps: [], stints: [], pit: [], race_control: [] };
+const DB = { drivers: [], intervals: [], position: [], laps: [], stints: [], pit: [], race_control: [], weather: [] };
 
 function build() {
   const SK = 77002;
@@ -67,6 +67,9 @@ function build() {
       const intv = i ? +(((order[i - 1].dist - c.dist) * c.base).toFixed(3)) : 0;
       DB.intervals.push({ driver_number: c.n, gap_to_leader: i ? +gap.toFixed(3) : 0, interval: intv, date: iso(t), session_key: 77002 });
     });
+  }
+  for (let t = 0; t <= 1300; t += 120) {
+    DB.weather.push({ date: iso(t), air_temperature: 23.5, track_temperature: 38 + t / 200, rainfall: 0, wind_speed: 2.1, session_key: 77002 });
   }
   DB.race_control.push({ date: iso(200), category: "Flag", flag: "YELLOW", message: "YELLOW IN SECTOR 2", session_key: 77002 });
   DB.race_control.push({ date: iso(260), category: "Flag", flag: "CLEAR", message: "TRACK CLEAR", session_key: 77002 });
