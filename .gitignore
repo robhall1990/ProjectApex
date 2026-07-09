@@ -16,3 +16,6 @@ local.properties
 
 # Android Studio project files
 /.idea/
+
+# Local Claude Code state (agent worktrees, etc.)
+/.claude/
