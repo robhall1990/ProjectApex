@@ -54,6 +54,7 @@ android {
 
 dependencies {
     implementation(project(":intelligence"))
+    implementation(project(":core"))
 
     implementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -79,13 +80,8 @@ dependencies {
     implementation(libs.androidx.hilt.navigation.compose)
 
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.serialization.json)
-
-    // Networking: OpenF1 live-timing client (core/di/NetworkModule.kt, data/openf1/).
-    implementation(libs.retrofit.core)
-    implementation(libs.retrofit.converter.kotlinx.serialization)
-    implementation(libs.okhttp.core)
-    implementation(libs.okhttp.logging.interceptor)
+    // libs.kotlinx.serialization.json, retrofit, and okhttp (used directly by
+    // core/di/NetworkModule.kt) come transitively as `api` deps of :core.
 
     implementation(libs.coil.compose)
 

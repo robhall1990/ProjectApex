@@ -114,6 +114,15 @@ server-side pulse computation (the `:intelligence` module already runs
 off-device by design), KMP/iOS evaluation, widgets/Wear, and community
 features. Sequenced by what Phase 2's analytics say users actually do.
 
+A head start on the KMP question already exists: the domain/data/
+intelligence-adapter layer was extracted into a plain Kotlin/JVM `:core`
+module (out of band from the phased ticket sequence, on developer request)
+specifically so a Compose Desktop dev tool (`:desktop`, see
+[Desktop.md](Desktop.md)) could exercise the engine without an Android
+device. It's explicitly a developer tool, not a product surface — but it's
+real evidence the engine layer is portable, which de-risks a future real
+iOS/desktop product decision considerably.
+
 ## Standing risks
 
 | Risk | Mitigation |
