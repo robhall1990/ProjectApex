@@ -2,6 +2,17 @@
 
 The smartest way to watch Formula 1.
 
+## ⚡ Apex Live — the working MVP (start here)
+
+**[`web/`](web/) contains a working, zero-build web app** that does the thing today:
+real F1 timing (gaps, intervals, tyres, pits) from the [OpenF1 API](https://openf1.org),
+a gap ladder, the classic race trace, an automatic race-intelligence feed, replay of any
+session back to 2023, and optional Claude-powered strategy insights. One HTML file — open
+it on Windows, Android, anything with a browser. See [`web/README.md`](web/README.md).
+
+The Android app below is the longer-term native client; the web MVP is how you watch
+this weekend's session.
+
 Project Apex is a native Android client for live F1 timing, circuit visualisation,
 and race analysis. This repository currently contains the production foundation,
 the bottom-nav app shell, a pure-Kotlin race domain model (`RaceEngine`), a
