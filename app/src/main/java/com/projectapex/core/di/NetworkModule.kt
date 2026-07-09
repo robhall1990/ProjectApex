@@ -1,5 +1,6 @@
 package com.projectapex.core.di
 
+import com.projectapex.BuildConfig
 import com.projectapex.data.openf1.OpenF1Api
 import dagger.Module
 import dagger.Provides
@@ -37,15 +38,16 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(): OkHttpClient {
-        val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
-        }
-        return OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .connectTimeout(HTTP_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(HTTP_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(HTTP_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .addInterceptor(logging)
-            .build()
+        if (BuildConfig.DEBUG) {
+            builder.addInterceptor(
+                HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
+            )
+        }
+        return builder.build()
     }
 
     @Provides

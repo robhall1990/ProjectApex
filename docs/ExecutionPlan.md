@@ -45,6 +45,17 @@ lean on reflection/generated code that R8 can strip.
 - `app/build.gradle.kts`: add a `debug` block only if needed for the
   above; no other build-type changes.
 
+  > Implementation note: no `debug` block was added — AGP's built-in
+  > `debug` build type already sets `BuildConfig.DEBUG = true` with no
+  > extra config, which is all `NetworkModule` needs. Also, no explicit
+  > keep rules were added for `@Serializable` DTOs: kotlinx-serialization
+  > 1.7.3's consumer proguard rules cover generated serializers for
+  > modern (1.6+) releases, verified by inspecting the dependency
+  > versions in `gradle/libs.versions.toml` rather than by a real R8 run
+  > (sandbox can't reach `dl.google.com`/the Gradle wrapper distribution,
+  > so `assembleRelease` couldn't be executed here — ACs 1, 2 and 4 are
+  > implemented-but-unverified pending a real build environment).
+
 **AC**
 
 1. `./gradlew :app:assembleRelease` succeeds.
