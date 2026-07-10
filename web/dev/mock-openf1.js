@@ -22,6 +22,7 @@ const iso = s => new Date(T0 + s * 1000).toISOString();
 const MEETING = { meeting_key: 9001, meeting_name: "Mockshire Grand Prix", country_name: "Mockland", circuit_short_name: "Mockshire", year: 2026, date_start: iso(-7200) };
 const SESSIONS = [
   { session_key: 77001, session_name: "Practice 1", session_type: "Practice", meeting_key: 9001, year: 2026, country_name: "Mockland", circuit_short_name: "Mockshire", date_start: iso(-90000), date_end: iso(-86400) },
+  { session_key: 77003, session_name: "Qualifying", session_type: "Qualifying", meeting_key: 9001, year: 2026, country_name: "Mockland", circuit_short_name: "Mockshire", date_start: iso(-40000), date_end: iso(-37400) },
   { session_key: 77002, session_name: "Race", session_type: "Race", meeting_key: 9001, year: 2026, country_name: "Mockland", circuit_short_name: "Mockshire", date_start: iso(0), date_end: iso(1300) },
 ];
 
@@ -94,6 +95,21 @@ function build() {
   for (const [t, n] of [[150, 1], [420, 4], [700, 1], [980, 16]]) {
     DB.team_radio.push({ driver_number: n, date: iso(t), recording_url: "/audio/radio.wav", session_key: 77002, meeting_key: 9001 });
   }
+
+  // Qualifying (77003): three segments separated by >5 min of silence, so the
+  // app's segment inference sees Q1 / Q2 / Q3. Grid order == pace order:
+  // everyone runs Q1, the top four make Q2, the top two fight in Q3.
+  const QT = -40000;
+  GRID.forEach(([n, tla, name, team, colour, base], i) => {
+    DB.drivers.push({ driver_number: n, name_acronym: tla, full_name: name, broadcast_name: name, team_name: team, team_colour: colour, session_key: 77003 });
+    DB.stints.push({ driver_number: n, stint_number: 1, compound: "SOFT", lap_start: 1, tyre_age_at_start: 0, session_key: 77003 });
+    let lapNo = 1;
+    const put = (t, dur) => DB.laps.push({ driver_number: n, lap_number: lapNo++, lap_duration: +dur.toFixed(3), date_start: iso(QT + t), session_key: 77003 });
+    put(60 + i * 12, base + 0.45);
+    put(300 + i * 12, base + 0.15);
+    if (i < 4) { put(1060 + i * 12, base + 0.05); put(1300 + i * 12, base - 0.15); }
+    if (i < 2) { put(2060 + i * 12, base - 0.2); put(2300 + i * 12, base - 0.35); }
+  });
   DB.race_control.push({ date: iso(200), category: "Flag", flag: "YELLOW", message: "YELLOW IN SECTOR 2", session_key: 77002 });
   DB.race_control.push({ date: iso(260), category: "Flag", flag: "CLEAR", message: "TRACK CLEAR", session_key: 77002 });
   DB.race_control.push({ date: iso(1250), category: "Flag", flag: "CHEQUERED", message: "CHEQUERED FLAG", session_key: 77002 });
@@ -137,7 +153,7 @@ http.createServer((req, res) => {
     let rows;
     if (resource === "meetings") rows = filterRows([MEETING], url.searchParams);
     else if (resource === "sessions") {
-      rows = url.searchParams.get("session_key") === "latest" ? [SESSIONS[1]] : filterRows(SESSIONS, url.searchParams);
+      rows = url.searchParams.get("session_key") === "latest" ? [SESSIONS[SESSIONS.length - 1]] : filterRows(SESSIONS, url.searchParams);
     } else if (resource in DB) rows = filterRows(DB[resource], url.searchParams);
     else { res.writeHead(404); return res.end("[]"); }
     res.writeHead(200, { "content-type": "application/json" });

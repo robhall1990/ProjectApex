@@ -138,6 +138,30 @@
   .radio-play:hover { border-color: var(--red); }
   .radio-more { color: var(--muted); font-size: 11px; text-align: center; padding-top: 2px; }
 
+  /* Qualifying */
+  tr.drop { background: rgba(255,92,92,0.08); }
+  tr.drop td.pos { color: #ff5c5c; }
+  .cut-out { color: #ff5c5c; font-family: var(--mono); font-size: 12px; }
+  .cut-safe { color: #35c46f; font-family: var(--mono); font-size: 12px; }
+
+  /* Strategy */
+  .und-on { color: #35c46f; font-weight: 700; }
+  .und-near { color: var(--amber, #f5b942); }
+  .win-now { color: #35c46f; font-weight: 700; }
+  .win-over { color: #ff5c5c; font-weight: 700; }
+
+  /* Head to head */
+  .h2h-pick { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; }
+  .h2h-pick select { font-size: 12px; padding: 3px 6px; }
+  .h2h-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .h2h-stats .stat { border: 1px solid var(--line); border-radius: 9px; background: var(--surface2); padding: 5px 10px; font-size: 12px; color: var(--ink2); }
+  .h2h-stats .stat b { color: var(--ink); font-family: var(--mono); }
+  .h2h-cols { display: grid; grid-template-columns: 1fr 300px; gap: 14px; align-items: start; }
+  #h2h { width: 100%; height: 210px; display: block; }
+  @media (max-width: 900px) { .h2h-cols { grid-template-columns: 1fr; } }
+  .lap-fast { color: #35c46f; font-family: var(--mono); }
+  .lap-slow { color: #ff5c5c; font-family: var(--mono); }
+
   /* Race trace */
   .trace-wrap { position: relative; }
   #trace { width: 100%; height: 340px; display: block; }
@@ -215,6 +239,12 @@
         </div>
         <div class="empty" id="boardEmpty">No timing data yet — pick a session or hit Demo.</div>
       </div>
+      <div class="card" id="stratCard" style="display:none">
+        <h2>Strategy <span class="right" style="color:var(--muted)">model est. · pit loss ~22s</span></h2>
+        <div class="tbl-wrap">
+          <table class="board" id="strat"><thead></thead><tbody></tbody></table>
+        </div>
+      </div>
     </div>
     <div>
       <div class="card" id="ladderCard" style="display:none">
@@ -244,6 +274,23 @@
     <div class="trace-wrap">
       <canvas id="trace"></canvas>
       <div class="tooltip" id="traceTip"></div>
+    </div>
+  </div>
+
+  <div class="card" id="h2hCard" style="display:none">
+    <h2>Head to head
+      <span class="right h2h-pick">
+        <select id="h2hA"></select>
+        <span style="color:var(--muted)">vs</span>
+        <select id="h2hB"></select>
+      </span>
+    </h2>
+    <div class="h2h-stats" id="h2hStats"></div>
+    <div class="h2h-cols">
+      <div class="trace-wrap"><canvas id="h2h"></canvas></div>
+      <div class="tbl-wrap">
+        <table class="board" id="h2hLaps"><thead></thead><tbody></tbody></table>
+      </div>
     </div>
   </div>
 
@@ -371,6 +418,7 @@ const S = {
   weather: null,                   // latest weather row
   firstPos: new Map(),             // n -> position at first sighting (≈ grid)
   focus: null,                     // driver_number highlighted across all views
+  h2hA: null, h2hB: null, h2hManual: false,   // head-to-head pair (manual = user picked)
   insights: [],
   seenInsightKeys: new Map(),      // key -> expiry ts
   cursors: {},
@@ -389,6 +437,7 @@ function resetData() {
     radio: [], radioSeen: new Set(),
     flag: null, chequered: false, maxLap: 0, totalLaps: null,
     weather: null, firstPos: new Map(), focus: null,
+    h2hA: null, h2hB: null, h2hManual: false,
     insights: [], seenInsightKeys: new Map(), cursors: {}, pollCount: 0, backoff: 0,
   });
   stopRadioPlayback();
@@ -546,6 +595,46 @@ function lastLapOf(n) {
   return best;
 }
 
+/* ---------- qualifying segments ----------
+   OpenF1 has no Q1/Q2/Q3 field, but the track goes quiet for several minutes
+   between segments — so cluster lap start times and call each cluster a Q. */
+function qualiInfo() {
+  if (S.isRace || !/quali/i.test(S.session?.session_name || "")) return null;
+  const starts = [];
+  for (const m of S.laps.values()) for (const r of m.values()) {
+    const t = Date.parse(r.date_start);
+    if (isFinite(t)) starts.push(t);
+  }
+  if (starts.length < 3) return null;
+  starts.sort((a, b) => a - b);
+  const segs = [{ t0: starts[0], t1: starts[0] }];
+  for (const t of starts) {
+    const cur = segs[segs.length - 1];
+    if (t - cur.t1 > 300000 && segs.length < 3) segs.push({ t0: t, t1: t });
+    else cur.t1 = Math.max(cur.t1, t);
+  }
+  const count = S.drivers.size;
+  const active = segs.length - 1;
+  // classic 20-car format eliminates to P15 after Q1, P10 after Q2;
+  // for small fields (mock/tests) drop the bottom two per segment
+  const cutN = count >= 16 ? (active === 0 ? 15 : 10) : Math.max(2, count - 2 * (active + 1) + (active === 2 ? 2 : 0));
+  return { segs, active, cutN: active === 2 ? null : Math.min(cutN, count) };
+}
+
+function segBestOf(n, qi, idx) {
+  const m = S.laps.get(n);
+  if (!m) return null;
+  const lo = qi.segs[idx].t0 - 1000;
+  const hi = qi.segs[idx + 1] ? qi.segs[idx + 1].t0 - 60000 : Infinity;
+  let best = null;
+  for (const r of m.values()) {
+    const t = Date.parse(r.date_start);
+    if (!isFinite(t) || t < lo || t >= hi || !num(r.lap_duration)) continue;
+    if (best == null || r.lap_duration < best) best = r.lap_duration;
+  }
+  return best;
+}
+
 function computeRows() {
   const rows = [];
   if (S.isRace) {
@@ -564,15 +653,27 @@ function computeRows() {
       });
     }
   } else {
-    const entries = [...S.drivers.keys()].map(n => ({ n, best: S.bestLap.get(n)?.duration ?? null }));
-    entries.sort((a, b) => (a.best ?? 1e9) - (b.best ?? 1e9));
+    const qi = qualiInfo();
+    const entries = [...S.drivers.keys()].map(n => ({
+      n,
+      best: qi ? segBestOf(n, qi, qi.active) : (S.bestLap.get(n)?.duration ?? null),
+      overall: S.bestLap.get(n)?.duration ?? null,
+    }));
+    // in quali, drivers without a time in the current segment (eliminated or yet
+    // to run) rank below everyone who has one, ordered by their overall best
+    entries.sort((a, b) => (a.best ?? 1e9 + (a.overall ?? 1e8)) - (b.best ?? 1e9 + (b.overall ?? 1e8)));
     const top = entries[0]?.best ?? null;
+    const cutTime = qi?.cutN != null ? (entries[qi.cutN - 1]?.best ?? null) : null;
     entries.forEach(({ n, best }, i) => {
       const last = lastLapOf(n);
       rows.push({
         n, pos: i + 1, best, last: last?.lap_duration ?? null,
         gap: (best != null && top != null && i > 0) ? best - top : (i === 0 && best != null ? "FASTEST" : null),
         tyre: tyreInfo(n), lapsRun: S.maxLapOf(n),
+        seg: qi ? qi.active : null,
+        drop: qi?.cutN != null && i + 1 > qi.cutN,
+        cutDelta: (qi?.cutN != null && cutTime != null && best != null && i + 1 !== qi.cutN)
+          ? best - cutTime : null,
       });
     });
   }
@@ -585,7 +686,9 @@ function render() {
   const rows = computeRows();
   renderBoard(rows);
   renderLadder(rows);
+  renderStrategy(rows);
   renderTrace();
+  renderH2H(rows);
   renderFeed();
   renderRadio();
 }
@@ -596,9 +699,13 @@ function renderHeader() {
   chipMode.textContent = S.mode === "live" ? "LIVE" : S.mode === "demo" ? "DEMO" : S.mode === "replay" ? "REPLAY" : "idle";
 
   const lapChip = $("#chipLap");
+  const qi = qualiInfo();
   if (S.isRace && S.maxLap > 0) {
     lapChip.style.display = "";
     lapChip.textContent = "Lap " + S.maxLap + (S.totalLaps ? " / " + S.totalLaps : "") + (S.chequered ? " 🏁" : "");
+  } else if (qi) {
+    lapChip.style.display = "";
+    lapChip.textContent = `Q${qi.active + 1}` + (qi.cutN != null ? ` · cut P${qi.cutN}` : "");
   } else { lapChip.style.display = "none"; lapChip.textContent = ""; }
 
   const flagChip = $("#chipFlag");
@@ -656,18 +763,25 @@ function renderBoard(rows) {
       </tr>`;
     }).join("");
   } else {
-    thead.innerHTML = "<tr><th>P</th><th>Driver</th><th>Best</th><th>Gap</th><th>Last</th><th>Tyre</th><th>Laps</th></tr>";
+    const quali = rows.some(r => r.seg != null);
+    thead.innerHTML = `<tr><th>P</th><th>Driver</th><th>Best${quali ? ` (Q${rows[0].seg + 1})` : ""}</th><th>Gap</th><th>Last</th><th>Tyre</th><th>${quali ? "Cutoff" : "Laps"}</th></tr>`;
     tbody.innerHTML = rows.map(r => {
       const d = S.drivers.get(r.n) || {};
       const isFL = S.sessionBest && S.sessionBest.n === r.n;
-      return `<tr data-n="${r.n}" class="${S.focus === r.n ? "sel" : ""}">
+      let lastCell;
+      if (quali) {
+        lastCell = r.drop
+          ? (r.cutDelta != null ? `<span class="cut-out">+${r.cutDelta.toFixed(3)}</span>` : `<span class="cut-out">no time</span>`)
+          : (r.cutDelta != null && r.cutDelta < 0 ? `<span class="cut-safe">−${Math.abs(r.cutDelta).toFixed(3)}</span>` : '<span style="color:var(--muted)">—</span>');
+      } else lastCell = String(r.lapsRun || 0);
+      return `<tr data-n="${r.n}" class="${S.focus === r.n ? "sel" : ""}${r.drop ? " drop" : ""}">
         <td class="pos">${r.pos}</td>
         ${drvCell(r, d)}
         <td class="${isFL ? "best" : ""}">${fmtLap(r.best)}</td>
         <td>${r.gap === "FASTEST" ? '<span style="color:var(--muted)">—</span>' : esc(fmtGap(r.gap))}</td>
         <td>${fmtLap(r.last)}</td>
         <td><span class="tyre ${r.tyre.cls}">${r.tyre.letter}</span></td>
-        <td>${r.lapsRun || 0}</td>
+        <td>${lastCell}</td>
       </tr>`;
     }).join("");
   }
@@ -856,6 +970,139 @@ $("#trace").addEventListener("mousemove", e => {
 $("#trace").addEventListener("mouseleave", hideTraceTip);
 function hideTraceTip() { $("#traceTip").style.display = "none"; if (trace.hoverLap != null) { trace.hoverLap = null; renderTrace(); } }
 
+/* ============================== head to head ============================== */
+let h2hOptionsSig = "";
+
+/* Gap between two cars over time, from matched interval samples.
+   Positive = B behind A. */
+function h2hSeries(a, b) {
+  const ha = (S.intervalHist.get(a) || []).filter(x => typeof x.gap === "number");
+  const hb = (S.intervalHist.get(b) || []).filter(x => typeof x.gap === "number");
+  if (ha.length < 2 || hb.length < 2) return null;
+  const pts = [];
+  let j = 0;
+  for (const pa of ha) {
+    while (j < hb.length - 1 && Math.abs(hb[j + 1].t - pa.t) <= Math.abs(hb[j].t - pa.t)) j++;
+    if (Math.abs(hb[j].t - pa.t) <= 30000) pts.push({ t: pa.t, v: hb[j].gap - pa.gap });
+  }
+  return pts.length >= 2 ? pts : null;
+}
+
+function renderH2H(rows) {
+  const card = $("#h2hCard");
+  const classified = rows.filter(r => r.pos < 99);
+  const show = S.isRace && classified.length >= 2 && S.maxLap >= 2;
+  card.style.display = show ? "block" : "none";
+  if (!show) return;
+
+  // (re)build the pickers only when the field changes, and never mid-interaction
+  const sig = classified.map(r => `${r.pos}:${r.n}`).join(",");
+  const selA = $("#h2hA"), selB = $("#h2hB");
+  if (sig !== h2hOptionsSig && document.activeElement !== selA && document.activeElement !== selB) {
+    h2hOptionsSig = sig;
+    const opts = classified.map(r => `<option value="${r.n}">P${r.pos} ${esc(tla(r.n))}</option>`).join("");
+    selA.innerHTML = opts; selB.innerHTML = opts;
+  }
+
+  // default pair: focused driver vs the car directly ahead (P1 → car behind);
+  // no focus → P1 vs P2. A manual pick sticks until the session changes.
+  let a = S.h2hA, b = S.h2hB;
+  if (!S.h2hManual) {
+    const idx = S.focus != null ? classified.findIndex(r => r.n === S.focus) : 0;
+    if (idx <= 0) { a = classified[0]?.n; b = classified[1]?.n; }
+    else { a = classified[idx - 1].n; b = classified[idx].n; }
+    S.h2hA = a; S.h2hB = b;
+  }
+  if (a == null || b == null || a === b) return;
+  selA.value = String(a); selB.value = String(b);
+
+  const dA = S.drivers.get(a) || {}, dB = S.drivers.get(b) || {};
+  const colA = teamColor(dA.team_colour), colB = teamColor(dB.team_colour);
+
+  // stat chips
+  const gA = S.latestInterval.get(a), gB = S.latestInterval.get(b);
+  const gap = (typeof gA?.gap_to_leader === "number" && typeof gB?.gap_to_leader === "number")
+    ? gB.gap_to_leader - gA.gap_to_leader : null;
+  const tA = tyreInfo(a), tB = tyreInfo(b);
+  const lastA = lastLapOf(a)?.lap_duration, lastB = lastLapOf(b)?.lap_duration;
+  const stats = [];
+  if (gap != null) stats.push(`<span class="stat">gap <b>${gap >= 0 ? "+" : "−"}${Math.abs(gap).toFixed(2)}s</b> ${esc(tla(gap >= 0 ? b : a))} behind</span>`);
+  stats.push(`<span class="stat">tyres <b>${tA.letter}${tA.age ?? ""}</b> vs <b>${tB.letter}${tB.age ?? ""}</b></span>`);
+  stats.push(`<span class="stat">pits <b>${(S.pits.get(a) || []).length}</b> vs <b>${(S.pits.get(b) || []).length}</b></span>`);
+  if (num(lastA) && num(lastB)) {
+    const d = lastA - lastB;
+    stats.push(`<span class="stat">last lap <b>${Math.abs(d) < 0.005 ? "even" : `${esc(tla(d < 0 ? a : b))} −${Math.abs(d).toFixed(2)}s`}</b></span>`);
+  }
+  $("#h2hStats").innerHTML = stats.join("");
+
+  // gap-over-time chart
+  const cv = $("#h2h");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const pts = h2hSeries(a, b);
+  if (pts) {
+    const padL = 46, padR = 12, padT = 16, padB = 22;
+    let vmin = Math.min(0, ...pts.map(p => p.v)), vmax = Math.max(0, ...pts.map(p => p.v));
+    const spread = Math.max(1.5, vmax - vmin); vmin -= spread * 0.1; vmax += spread * 0.1;
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    const xOf = t => padL + (w - padL - padR) * (t - t0) / Math.max(1, t1 - t0);
+    const yOf = v => padT + (h - padT - padB) * (1 - (v - vmin) / (vmax - vmin));
+    ctx.font = "10.5px ui-monospace, Menlo, monospace";
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    const step = (vmax - vmin) > 24 ? 10 : (vmax - vmin) > 10 ? 5 : (vmax - vmin) > 4 ? 2 : 1;
+    for (let v = Math.ceil(vmin / step) * step; v <= vmax; v += step) {
+      ctx.strokeStyle = v === 0 ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.06)";
+      ctx.beginPath(); ctx.moveTo(padL, yOf(v)); ctx.lineTo(w - padR, yOf(v)); ctx.stroke();
+      ctx.fillStyle = "#66707e"; ctx.fillText((v > 0 ? "+" : "") + v + "s", padL - 6, yOf(v));
+    }
+    // time axis: minutes before "now"
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    const mins = (t1 - t0) / 60000;
+    const mStep = mins > 40 ? 10 : mins > 15 ? 5 : mins > 6 ? 2 : 1;
+    for (let m = 0; m <= mins; m += mStep) {
+      const t = t1 - m * 60000;
+      if (t < t0) break;
+      ctx.fillStyle = "#66707e"; ctx.fillText(m === 0 ? "now" : `−${m}m`, xOf(t), h - padB + 5);
+    }
+    ctx.strokeStyle = colB; ctx.lineWidth = 2.2; ctx.beginPath();
+    pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(Math.max(vmin, Math.min(vmax, p.v))); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+    ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.font = "700 11px system-ui, sans-serif";
+    ctx.fillStyle = colB;
+    ctx.fillText(`${tla(b)} vs ${tla(a)} — above 0: ${tla(b)} behind, below 0: ${tla(b)} ahead`, padL + 4, padT - 7);
+  } else {
+    ctx.fillStyle = "#66707e"; ctx.font = "12px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("Not enough shared interval history yet", w / 2, h / 2);
+  }
+
+  // last five common laps
+  const mA = S.laps.get(a), mB = S.laps.get(b);
+  const common = [];
+  if (mA && mB) {
+    for (let l = S.maxLap; l >= 1 && common.length < 5; l--) {
+      const la = num(mA.get(l)?.lap_duration), lb = num(mB.get(l)?.lap_duration);
+      if (la && lb) common.push({ l, la, lb });
+    }
+  }
+  $("#h2hLaps thead").innerHTML = `<tr><th>Lap</th><th style="color:${colA}">${esc(tla(a))}</th><th style="color:${colB}">${esc(tla(b))}</th><th>Δ</th></tr>`;
+  $("#h2hLaps tbody").innerHTML = common.map(({ l, la, lb }) => {
+    const d = la - lb;
+    return `<tr><td class="pos">L${l}</td><td>${fmtLap(la)}</td><td>${fmtLap(lb)}</td>
+      <td class="${d <= 0 ? "lap-fast" : "lap-slow"}">${d <= 0 ? "−" : "+"}${Math.abs(d).toFixed(3)} ${esc(tla(d <= 0 ? a : b))}</td></tr>`;
+  }).join("") || `<tr><td colspan="4" style="color:var(--muted)">No completed laps in common yet.</td></tr>`;
+}
+
+for (const id of ["h2hA", "h2hB"]) $("#" + id).addEventListener("change", () => {
+  S.h2hA = parseInt($("#h2hA").value, 10);
+  S.h2hB = parseInt($("#h2hB").value, 10);
+  S.h2hManual = true;
+  render();
+});
+
 /* ============================== insights ============================== */
 function addInsight({ icon, title, desc, prio = 1, key, cooldown = 60 }) {
   const now = Date.now();
@@ -952,6 +1199,102 @@ $("#radioList").addEventListener("click", e => {
   renderRadio();
 });
 
+/* ============================== strategy model ============================== */
+const PIT_LOSS = 22;                                             // typical total time lost to a stop (s)
+const TYRE_LIFE = { SOFT: 22, MEDIUM: 30, HARD: 40, INTERMEDIATE: 28, WET: 26 };   // nominal stint length (laps)
+const NOMINAL_DEG = { SOFT: 0.08, MEDIUM: 0.05, HARD: 0.03, INTERMEDIATE: 0.06, WET: 0.06 };  // s/lap
+
+/* Clean lap times in the current stint: drop out-laps and anything way off the
+   median (SC laps, in-laps, mistakes) so the regression sees real pace. */
+function stintCleanLaps(n) {
+  const st = currentStint(n), m = S.laps.get(n);
+  if (!st || !m) return null;
+  const rows = [...m.values()]
+    .filter(r => r.lap_number >= (st.lap_start || 1) && num(r.lap_duration) && !r.is_pit_out_lap)
+    .sort((a, b) => a.lap_number - b.lap_number);
+  if (rows.length < 4) return null;
+  const med = rows.map(r => r.lap_duration).sort((a, b) => a - b)[Math.floor(rows.length / 2)];
+  const clean = rows.filter(r => r.lap_duration < med + 5);
+  return clean.length >= 4 ? clean : null;
+}
+
+/* Tyre degradation as the least-squares slope of lap time vs lap number (s/lap). */
+function degradation(n) {
+  const pts = stintCleanLaps(n);
+  if (!pts) return null;
+  const mx = pts.reduce((a, r) => a + r.lap_number, 0) / pts.length;
+  const my = pts.reduce((a, r) => a + r.lap_duration, 0) / pts.length;
+  let sxy = 0, sxx = 0;
+  for (const r of pts) { sxy += (r.lap_number - mx) * (r.lap_duration - my); sxx += (r.lap_number - mx) ** 2; }
+  return sxx ? sxy / sxx : null;
+}
+
+/* Projected pit window in race laps: nominal compound life scaled by how the
+   observed degradation compares with nominal for that compound. */
+function pitWindow(n) {
+  const st = currentStint(n), t = tyreInfo(n);
+  if (!st || t.age == null) return null;
+  const life = TYRE_LIFE[st.compound] || 30;
+  const deg = degradation(n);
+  let eff = life;
+  if (deg != null && deg > 0.005) {
+    const scale = Math.sqrt((NOMINAL_DEG[st.compound] || 0.05) / deg);
+    eff = Math.round(life * Math.min(1.35, Math.max(0.6, scale)));
+  }
+  const open = S.maxLap + Math.max(0, Math.round(eff * 0.75) - t.age);
+  const close = S.maxLap + Math.max(0, eff - t.age);
+  return { open, close, eff, deg, overdue: t.age > eff, inWindow: t.age >= eff * 0.75 };
+}
+
+/* Undercut read: how many extra laps the car ahead must stay out for the car
+   behind (pitting now onto fresh tyres) to jump them. */
+function undercutRead(aheadN, gap) {
+  if (!(typeof gap === "number") || gap <= 0 || gap >= PIT_LOSS + 4) return null;
+  const tA = tyreInfo(aheadN);
+  if (tA.age == null || tA.age < 6) return null;                 // nothing to exploit on fresh rubber
+  const degA = degradation(aheadN) ?? (NOMINAL_DEG[tA.compound] || 0.05);
+  const freshAdv = Math.max(0.5, 0.7 + Math.max(0, degA) * tA.age * 0.5);
+  return { laps: Math.ceil(gap / freshAdv), freshAdv };
+}
+
+function renderStrategy(rows) {
+  const card = $("#stratCard");
+  const show = S.isRace && !S.chequered && S.maxLap >= 5 && rows.some(r => r.pos < 99);
+  card.style.display = show ? "block" : "none";
+  if (!show) return;
+  const top = rows.filter(r => r.pos < 99).slice(0, 10);
+  $("#strat thead").innerHTML = "<tr><th>Driver</th><th>Tyre</th><th>Deg/lap</th><th>Pit window</th><th>Undercut ahead</th></tr>";
+  $("#strat tbody").innerHTML = top.map((r, i) => {
+    const d = S.drivers.get(r.n) || {};
+    const w = pitWindow(r.n);
+    const deg = w?.deg;
+    const winTxt = !w ? "—"
+      : w.overdue ? `<span class="win-over">overdue</span>`
+      : w.inWindow ? `<span class="win-now">open now</span>${S.totalLaps && w.close <= S.totalLaps ? ` <span style="color:var(--muted)">→ L${w.close}</span>` : ""}`
+      : `L${w.open}–L${w.close}`;
+    const u = i > 0 ? undercutRead(top[i - 1].n, r.interval) : null;
+    const undTxt = !u ? "—"
+      : u.laps <= 2 ? `<span class="und-on">ON — jumps ${tla(top[i - 1].n)} in ~${u.laps} lap${u.laps > 1 ? "s" : ""}</span>`
+      : u.laps <= 4 ? `<span class="und-near">~${u.laps} laps on ${tla(top[i - 1].n)}</span>`
+      : `<span style="color:var(--muted)">weak (~${u.laps} laps)</span>`;
+    return `<tr data-n="${r.n}" class="${S.focus === r.n ? "sel" : ""}">
+      <td class="drv"><span class="tla"><span class="teambar" style="background:${teamColor(d.team_colour)}"></span>${esc(tla(r.n))}</span></td>
+      <td><span class="tyre ${r.tyre.cls}">${r.tyre.letter}${r.tyre.age != null ? " " + r.tyre.age : ""}</span></td>
+      <td>${deg != null ? (deg >= 0 ? "+" : "") + deg.toFixed(2) + "s" : "—"}</td>
+      <td>${winTxt}</td>
+      <td>${undTxt}</td>
+    </tr>`;
+  }).join("");
+}
+
+$("#strat tbody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-n]");
+  if (!tr) return;
+  const n = parseInt(tr.dataset.n, 10);
+  S.focus = S.focus === n ? null : n;
+  render();
+});
+
 /* Trend detectors — run periodically over interval history. */
 function runDetectors() {
   if (!S.isRace || S.chequered || S.maxLap < 2) return;
@@ -976,6 +1319,14 @@ function runDetectors() {
       addInsight({ icon: "📉", prio: 2, key: `close-${ahead.n}-${behind.n}`, cooldown: 300,
         title: `${tla(behind.n)} hunting ${tla(ahead.n)}`,
         desc: `Gap down ${(past.interval - cur).toFixed(1)}s over the last few laps — now ${cur.toFixed(1)}s.` });
+    }
+
+    // undercut window: behind car could jump ahead car by pitting now
+    const u = undercutRead(ahead.n, cur);
+    if (u && u.laps <= 2 && S.maxLap >= 8 && cur > 1.5) {
+      addInsight({ icon: "♟️", prio: 2, key: `und-${ahead.n}-${behind.n}`, cooldown: 360,
+        title: `Undercut window: ${tla(behind.n)} on ${tla(ahead.n)}`,
+        desc: `${cur.toFixed(1)}s gap vs ~${PIT_LOSS}s pit loss — fresh tyres claw that back in ~${u.laps} lap${u.laps > 1 ? "s" : ""}. ${tla(ahead.n)} must cover.` });
     }
 
     // fresher-rubber threat
@@ -1025,11 +1376,30 @@ function buildBrief() {
   if (S.isRace) lines.push(`Lap ${S.maxLap}${S.totalLaps ? "/" + S.totalLaps : ""}${S.chequered ? " — chequered flag" : ""}${S.flag ? " — " + S.flag : ""}`);
   if (S.weather) lines.push(`Weather: track ${S.weather.track_temperature ?? "?"}°C, air ${S.weather.air_temperature ?? "?"}°C${S.weather.rainfall > 0 ? ", RAIN" : ""}`);
   lines.push("");
-  lines.push(S.isRace ? "Pos | Drv | Gap | Int | Tyre(age) | Pits | Avg last 3 laps" : "Pos | Drv | Best | Gap | Laps");
+  const qib = qualiInfo();
+  if (qib) lines.push(`Qualifying segment Q${qib.active + 1}${qib.cutN != null ? ` — elimination cutoff is P${qib.cutN}` : " — final segment, no elimination"}`);
+  lines.push(S.isRace ? "Pos | Drv | Gap | Int | Tyre(age) | Pits | Avg last 3 laps" : "Pos | Drv | Best | Gap | Laps" + (qib ? " | Cutoff margin" : ""));
   for (const r of rows) {
     const d = S.drivers.get(r.n) || {};
     if (S.isRace) lines.push(`P${r.pos} ${tla(r.n)} (${d.team_name || "?"}) | ${r.gap === "LEADER" ? "leader" : fmtGap(r.gap)} | ${fmtGap(r.interval)} | ${r.tyre.compound || "?"}(${r.tyre.age ?? "?"}) | pits:${r.pits} | ${fmtLap(avgRecentPace(r.n))}`);
-    else lines.push(`P${r.pos} ${tla(r.n)} (${d.team_name || "?"}) | ${fmtLap(r.best)} | ${r.gap === "FASTEST" ? "-" : fmtGap(r.gap)} | ${r.lapsRun} laps`);
+    else {
+      let cut = "";
+      if (qib) cut = r.drop ? (r.cutDelta != null ? ` | OUT, needs ${r.cutDelta.toFixed(3)}s` : " | OUT, no time") : (r.cutDelta != null && r.cutDelta < 0 ? ` | safe by ${Math.abs(r.cutDelta).toFixed(3)}s` : "");
+      lines.push(`P${r.pos} ${tla(r.n)} (${d.team_name || "?"}) | ${fmtLap(r.best)} | ${r.gap === "FASTEST" ? "-" : fmtGap(r.gap)} | ${r.lapsRun} laps${cut}`);
+    }
+  }
+  if (S.isRace && !S.chequered && S.maxLap >= 5) {
+    const strat = [];
+    rows.slice(0, 8).forEach((r, i) => {
+      if (r.pos >= 99) return;
+      const w = pitWindow(r.n);
+      if (!w) return;
+      let line = `- ${tla(r.n)}: deg ${w.deg != null ? (w.deg >= 0 ? "+" : "") + w.deg.toFixed(2) + "s/lap" : "n/a"}, window ${w.overdue ? "OVERDUE" : w.inWindow ? `open now (to L${w.close})` : `L${w.open}–L${w.close}`}`;
+      const u = i > 0 ? undercutRead(rows[i - 1].n, r.interval) : null;
+      if (u && u.laps <= 4) line += `; undercut on ${tla(rows[i - 1].n)} viable in ~${u.laps} laps`;
+      strat.push(line);
+    });
+    if (strat.length) lines.push("", `Strategy model (pit loss ~${PIT_LOSS}s):`, ...strat);
   }
   if (S.sessionBest) lines.push(`\nFastest lap: ${tla(S.sessionBest.n)} ${fmtLap(S.sessionBest.duration)} (lap ${S.sessionBest.lap})`);
   const ev = S.insights.slice(0, 10).map(i => `[${i.at}] ${i.title}: ${i.desc}`);
@@ -1188,6 +1558,8 @@ async function loadSession(sessionKey) {
   if (ep !== S.epoch) return;
   if (!ses) { toast("Session not found"); return; }
   S.session = ses;
+  const sel = $("#selSession");
+  if (sel.value !== String(ses.session_key) && [...sel.options].some(o => o.value === String(ses.session_key))) sel.value = String(ses.session_key);
   S.isRace = ses.session_type === "Race" || /Race|Sprint/i.test(ses.session_name || "");
   try {
     const drivers = await of("/drivers", { session_key: sessionKey });
@@ -1528,7 +1900,9 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   armAutoAI();
   try {
     await initPickers();
-    await loadLatest();
+    const want = new URLSearchParams(location.search).get("session");
+    if (want) await loadSession(want);
+    else await loadLatest();
   } catch (e) { apiTrouble(e); }
 })();
 </script>

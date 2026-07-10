@@ -75,23 +75,63 @@ try {
   await page.screenshot({ path: `${SHOT}/replay-focus.png`, fullPage: true });
   await page.locator("#board tbody tr").nth(1).click();
 
+  /* head to head: default pair, chart, lap table, manual pick */
+  check("h2h: card visible", await page.isVisible("#h2hCard"));
+  const pairA = await page.inputValue("#h2hA"), pairB = await page.inputValue("#h2hB");
+  check("h2h: default pair populated", pairA !== "" && pairB !== "" && pairA !== pairB, `${pairA} vs ${pairB}`);
+  check("h2h: lap-delta rows", await page.locator("#h2hLaps tbody tr").count() >= 3);
+  const lit = await page.evaluate(() => {
+    const cv = document.querySelector("#h2h");
+    const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+    return n;
+  });
+  check("h2h: chart painted", lit > 1000, `${lit} px`);
+  await page.selectOption("#h2hB", { index: 5 });
+  await page.waitForTimeout(300);
+  check("h2h: manual pick sticks", await page.inputValue("#h2hB") !== pairB);
+
   /* scrubbing */
   const lapBefore = await page.textContent("#chipLap").catch(() => "");
-  await page.locator("#scrub").evaluate(el => { el.value = 400; el.dispatchEvent(new Event("input")); });
+  await page.locator("#scrub").evaluate(el => { el.value = 600; el.dispatchEvent(new Event("input")); });
   await page.waitForTimeout(600);
   const lapAfter = await page.textContent("#chipLap").catch(() => "");
   check("replay: scrub changes lap chip", lapAfter !== lapBefore, `${lapBefore.trim()} → ${lapAfter.trim()}`);
+
+  /* strategy panel appears mid-race (hidden after the chequered flag) */
+  check("strategy: card visible mid-race", await page.isVisible("#stratCard"));
+  check("strategy: one row per driver", await page.locator("#strat tbody tr").count() === 6);
+  const stratRow = await page.locator("#strat tbody tr").first().innerText();
+  check("strategy: pit window projected", /L\d+–L\d+|open now|overdue/.test(stratRow), stratRow.replace(/\s+/g, " "));
   await page.screenshot({ path: `${SHOT}/replay.png`, fullPage: true });
 
   /* trace tooltip */
+  await page.locator("#trace").scrollIntoViewIfNeeded();
   const box = await page.locator("#trace").boundingBox();
   await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5);
   await page.waitForTimeout(300);
   check("trace: tooltip on hover", await page.isVisible("#traceTip"));
 
-  /* Claude brief carries the radio log */
+  /* Claude brief carries radio + strategy */
   const brief = await page.evaluate(() => buildBrief());
   check("brief: includes team radio section", brief.includes("Team radio traffic"));
+  check("brief: includes strategy model", brief.includes("Strategy model"));
+
+  /* ---- 1b. qualifying: segment inference, drop zone, cutoff gaps ---- */
+  await page.goto(`${BASE}/index.html?api=${BASE}/v1&session=77003`);
+  await page.waitForTimeout(2500);
+  check("quali: Q3 chip at end of replay", (await page.textContent("#chipLap")).trim().startsWith("Q3"));
+  check("quali: no drop zone in Q3", await page.locator("#board tbody tr.drop").count() === 0);
+  await page.locator("#scrub").evaluate(el => { el.value = 550; el.dispatchEvent(new Event("input")); });
+  await page.waitForTimeout(600);
+  const qChip = (await page.textContent("#chipLap")).trim();
+  check("quali: Q2 chip with cutoff after scrub", /^Q2/.test(qChip) && /cut/.test(qChip), qChip);
+  check("quali: drop-zone rows highlighted", await page.locator("#board tbody tr.drop").count() === 4);
+  const cutCells = await page.locator("#board .cut-out").count();
+  check("quali: cutoff deltas shown", cutCells >= 2, `${cutCells} cells`);
+  const qBrief = await page.evaluate(() => buildBrief());
+  check("quali: brief carries segment + cutoff", qBrief.includes("Qualifying segment") && qBrief.includes("OUT"));
+  await page.screenshot({ path: `${SHOT}/quali.png`, fullPage: true });
 
   /* ---- 2. demo mode (full synthetic pipeline) ---- */
   await page.click("#btnDemo");
