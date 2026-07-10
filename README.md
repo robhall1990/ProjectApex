@@ -6,6 +6,9 @@ redirect automatically.)*
 
 ## ⚡ The working MVP (start here)
 
+**Live at <https://robhall1990.github.io/ProjectApex/>** — on Android, Chrome →
+*Add to Home screen* installs it as an app.
+
 **[`web/`](web/) contains Project Velocity, a working zero-build web app** that does the
 thing today: real F1 timing (gaps, intervals, tyres, pits) from the
 [OpenF1 API](https://openf1.org), a gap ladder, the classic race trace, live weather,

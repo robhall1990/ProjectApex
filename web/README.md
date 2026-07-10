@@ -1,5 +1,8 @@
 # Project Velocity — the zero-faff F1 gaps & insights app
 
+**Live now: <https://robhall1990.github.io/ProjectApex/>** — open it on your phone,
+Chrome menu → *Add to Home screen* installs it like a native app.
+
 One self-contained web page: **`index.html`**. No build step, no install, no Android Studio.
 Open it on Windows, your phone, anywhere with a browser.
 
@@ -22,9 +25,10 @@ cd web
 python -m http.server 8000     # then open http://localhost:8000
 ```
 
-On your Android phone: host it (GitHub Pages, see below) and open the URL in Chrome →
-menu → **Add to Home screen**. It ships a PWA manifest, so it installs fullscreen with
-its own icon — behaves like a native app.
+On your Android phone: open the live URL above in Chrome → menu → **Add to Home
+screen**. It ships a PWA manifest and a service worker, so it installs fullscreen with
+its own icon, starts instantly, and still opens with no signal (Demo mode works
+fully offline).
 
 ## What you get
 
@@ -83,8 +87,19 @@ node web/dev/mock-openf1.js 8123
 
 The `?api=<base>` query param points the app at any OpenF1-shaped endpoint.
 
+`dev/verify.mjs` is the end-to-end test suite: it spawns the mock server and drives
+the app in headless Chromium, asserting the replay, team-radio, demo, settings and
+mobile-layout paths. CI (`.github/workflows/web-tests.yml`) runs it on every PR
+touching `web/`. To run locally:
+
+```bash
+npm install --no-save playwright
+npx playwright install chromium     # once
+node web/dev/verify.mjs
+```
+
 ## Deploying to GitHub Pages
 
 A workflow (`.github/workflows/pages.yml`) publishes this folder to GitHub Pages on every
-push to `master`. Merge this branch, then check the repo's **Actions** tab — the run prints
-your public URL (Settings → Pages shows it too). That URL is what you open on your phone.
+push to `master` — the live URL at the top of this file updates itself a minute or two
+after each merge. (If the repo is renamed, the URL changes to match; old links redirect.)

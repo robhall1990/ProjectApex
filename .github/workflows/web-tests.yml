@@ -1,0 +1,39 @@
+name: Web app end-to-end tests
+
+on:
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/web-tests.yml"
+  push:
+    branches: [master]
+    paths:
+      - "web/**"
+      - ".github/workflows/web-tests.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Run end-to-end verification
+        run: SHOT_DIR="$RUNNER_TEMP/shots" node web/dev/verify.mjs
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-screenshots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
