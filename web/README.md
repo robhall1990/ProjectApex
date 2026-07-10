@@ -34,6 +34,7 @@ its own icon — behaves like a native app.
 | **Track gaps** | The field laid out on a strip where distance = time gap (√ scale so battles stay readable). |
 | **Weather** | Track/air temperature and rain in the header, straight from the circuit. |
 | **Race intelligence** | Auto-detected battles, drivers closing in, tyre-offset threats, tyre cliffs, pit stops, overtakes, safety cars and flags. |
+| **Team radio 📻** | Every radio clip OpenF1 publishes, playable in place and tagged with driver + lap — hear the calls the broadcast never plays. Click a driver on the timing board to spotlight their messages. |
 | **✦ Ask Claude** | Sends the current timing snapshot to Claude for a strategist's read (undercut windows, threats, what to watch). Needs your own Anthropic API key (Settings ⚙︎). |
 | **Race trace** | Every driver's gap to the leader's average pace, lap by lap — the chart that shows the *whole* race shape. Hover for per-lap gaps. |
 | **Replay** | Any completed session back to 2023: scrub, play at 1×–120×. Great for testing before a race weekend. |
@@ -56,6 +57,11 @@ its own icon — behaves like a native app.
 
 The key is stored in your browser's localStorage only and calls go directly
 browser → api.anthropic.com. Don't paste it on a shared machine.
+
+Claude's brief includes the team-radio log (who called, on which lap). The audio
+itself isn't transcribed — the Claude API doesn't take audio — but radio-traffic
+timing is a real strategy signal (bursts cluster around pit calls and strategy
+switches), and Claude reads it together with the pit and tyre data.
 
 ## Race-weekend drill (e.g. Spa)
 
