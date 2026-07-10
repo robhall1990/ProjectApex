@@ -42,6 +42,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -53,6 +54,7 @@ android {
 
 dependencies {
     implementation(project(":intelligence"))
+    implementation(project(":core"))
 
     implementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -61,6 +63,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
 
     implementation(libs.androidx.compose.ui)
@@ -77,12 +80,8 @@ dependencies {
     implementation(libs.androidx.hilt.navigation.compose)
 
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.serialization.json)
-
-    // Networking dependencies for future live-timing features; not yet wired up.
-    implementation(libs.retrofit.core)
-    implementation(libs.retrofit.converter.kotlinx.serialization)
-    implementation(libs.okhttp.logging.interceptor)
+    // libs.kotlinx.serialization.json, retrofit, and okhttp (used directly by
+    // core/di/NetworkModule.kt) come transitively as `api` deps of :core.
 
     implementation(libs.coil.compose)
 

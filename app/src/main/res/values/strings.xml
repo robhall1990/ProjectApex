@@ -55,4 +55,15 @@
     <string name="settings_simulation_status_stopped">Simulation stopped</string>
     <string name="settings_start_simulated_race">Start Simulated Race</string>
     <string name="settings_stop_simulation">Stop Simulation</string>
+
+    <string name="settings_live_session_title">Live Session</string>
+    <string name="settings_live_session_total_laps_label">Total laps</string>
+    <string name="settings_live_session_total_laps_hint">e.g. 58</string>
+    <string name="settings_start_live_session">Start Live Session</string>
+    <string name="settings_stop_live_session">Stop Live Session</string>
+    <string name="settings_live_session_status_idle">Not connected</string>
+    <string name="settings_live_session_status_connecting">Connecting…</string>
+    <string name="settings_live_session_status_live">Live — receiving OpenF1 data</string>
+    <string name="settings_live_session_status_error">Connection issue: %1$s</string>
+    <string name="settings_live_session_disclaimer">Uses the free, unofficial OpenF1 API. Pit-lane status and track-status flags are best-effort approximations, not official timing.</string>
 </resources>

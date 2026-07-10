@@ -29,6 +29,10 @@ leader pressure and rank the three most important things happening — no AI
 models, no external calls. There is still no real data source — everything on
 screen today comes from the Developer Mode simulator, not a live timing feed.
 
+See [docs/Roadmap.md](docs/Roadmap.md) for the phased route from this
+prototype to a commercial-grade product, and
+[docs/ExecutionPlan.md](docs/ExecutionPlan.md) for the ticket-level
+breakdown (APX-014 onwards) that implements it.
 See [docs/Architecture.md](docs/Architecture.md) for the architectural
 decisions behind this foundation and the conventions future features should
 follow. See [docs/RaceIntelligencePlatform.md](docs/RaceIntelligencePlatform.md)
@@ -81,8 +85,21 @@ configuration is required beyond a valid `local.properties` `sdk.dir`
 # JVM unit tests (ViewModels)
 ./gradlew :app:testDebugUnitTest
 
+# :core (domain, live data source, intelligence adapter) and :intelligence
+./gradlew :core:test :intelligence:test
+
 # Instrumented Compose UI tests (requires a connected device or emulator)
 ./gradlew :app:connectedDebugAndroidTest
+```
+
+### Desktop target
+
+`:desktop` runs the same engine (`:core`) in a small Compose Multiplatform
+window — no Android device/emulator needed. See
+[docs/Desktop.md](docs/Desktop.md).
+
+```bash
+./gradlew :desktop:run
 ```
 
 ## Project structure
@@ -100,37 +117,52 @@ com.projectapex.intelligence
 │                   (registration-only extensibility, failure isolation, metrics)
 └── rank/          PrioritisationEngine (configurable scoring), RacePulse
 
-:app
+:core  (pure Kotlin/JVM module — no Android dependencies — see docs/Desktop.md)
 com.projectapex
-├── core/
-│   ├── theme/        Material 3 theme, color scheme, typography
-│   ├── model/         Shared, feature-agnostic domain-ish models (e.g. SessionState)
-│   ├── ui/            Reusable Compose components (e.g. ApexCard)
-│   └── navigation/    Top-level NavHost, bottom-nav shell, route definitions
 ├── domain/
-│   ├── DefaultDispatcher.kt  Shared background-dispatcher qualifier
-│   ├── model/         Race domain models (Driver, CarState, RaceState, ...) — pure Kotlin
+│   ├── DefaultDispatcher.kt, AppForegroundState.kt  Hilt qualifiers
+│   ├── model/         Race domain models (Driver, CarState, RaceState, TrackStatus, ...)
 │   ├── race/          RaceEngine — owns the current RaceState as a StateFlow
 │   ├── simulation/    RaceSimulator — generates believable fake race updates
 │   │                   for UI development (dev-only, not production data)
 │   ├── timeline/      RaceTimeline — records RaceState history; previous/next/seek
-│   (race intelligence now lives in the :intelligence module; the app drives it
-│    from RaceEngine via intelligence/adapter/RacePulseEngine)
+│   └── livedata/      OpenF1LiveDataSource, OpenF1RaceStateMapper — the live feed
+├── data/openf1/       OpenF1Api (Retrofit), DTOs, LiveSessionCache (incremental polling)
+├── core/model/        SessionStatus
+├── intelligence/adapter/  RaceStateAdapter (RaceState → TimingFrame) and
+│                          RacePulseEngine (drives :intelligence from RaceEngine,
+│                          exposes StateFlow<RacePulse>) — lives here (not :intelligence)
+│                          because it wires both sides; :intelligence never imports app types
+└── feature/race/  ObservationPresenter, RaceInsightUi — RacePulse → display strings,
+                    shared by both :app and :desktop's UIs
+
+:app  (Android — depends on :core and :intelligence)
+com.projectapex
+├── core/
+│   ├── theme/        Material 3 theme, color scheme, typography
+│   ├── ui/            Reusable Compose components (e.g. ApexCard)
+│   ├── navigation/    Top-level NavHost, bottom-nav shell, route definitions
+│   ├── di/            Hilt modules (NetworkModule, DomainModule)
+│   └── AppForegroundMonitor.kt  Android ProcessLifecycleOwner → StateFlow<Boolean>
 ├── feature/
 │   ├── splash/        Splash screen (Screen + ViewModel)
-│   ├── race/          Screen + one RaceViewModel combining race data (timeline)
-│   │   │               and intelligence (RacePulse via ObservationPresenter)
+│   ├── race/          Screen + RaceViewModel combining race data (timeline) and
+│   │   │               intelligence (RacePulse via :core's ObservationPresenter)
 │   │   └── components/  SessionHeader, RaceStatusBar, UnwrappedTrackView,
 │   │                     RaceIntelligenceSection, RaceInsightCard, RaceLeaderboard,
 │   │                     LeaderboardRow, PanelHeader, SectionCard, StatusChip, InfoRow
 │   ├── analysis/      Analysis tab (Screen + ViewModel)
-│   └── settings/      Settings tab (Screen + ViewModel + Developer Mode controls)
-├── intelligence/  adapter/ — RaceStateAdapter (RaceState → TimingFrame) and
-│                   RacePulseEngine (drives the :intelligence pipeline from
-│                   RaceEngine, exposes StateFlow<RacePulse>). Lives in :app
-│                   because it wires both sides; :intelligence never imports app types.
+│   └── settings/      Settings tab (Screen + ViewModel, Developer Mode + Live Session cards)
 ├── ApexApplication.kt Hilt application entry point
 └── MainActivity.kt    Single-activity host for the Compose navigation graph
+
+:desktop  (Compose Multiplatform Desktop — depends on :core and :intelligence,
+           no Hilt/Android — dev tool for exercising the engine off-device;
+           see docs/Desktop.md)
+com.projectapex.desktop
+├── AppContainer.kt    Manual composition root (mirrors :app's Hilt modules by hand)
+├── Main.kt             Window entry point
+└── ui/                 DesktopApp, ControlsBar, LeaderboardTable, InsightsPanel
 ```
 
 The `:intelligence` module implements the

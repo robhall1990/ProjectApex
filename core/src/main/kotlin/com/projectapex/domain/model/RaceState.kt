@@ -12,7 +12,8 @@ data class RaceState(
     val currentLap: Int,
     val totalLaps: Int,
     val cars: List<CarState>,
-    val timestamp: Long
+    val timestamp: Long,
+    val trackStatus: TrackStatus = TrackStatus.GREEN
 ) {
     companion object {
         fun empty(): RaceState = RaceState(
@@ -20,7 +21,8 @@ data class RaceState(
             currentLap = 0,
             totalLaps = 0,
             cars = emptyList(),
-            timestamp = 0L
+            timestamp = 0L,
+            trackStatus = TrackStatus.GREEN
         )
     }
 }

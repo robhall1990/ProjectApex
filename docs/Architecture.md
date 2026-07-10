@@ -4,6 +4,19 @@ This document explains the architectural decisions behind Project Apex's
 foundation and the conventions future feature work is expected to follow.
 It describes what exists in the codebase today, not aspirational design.
 
+> **Module note (post-desktop-target extraction):** `domain/`, `data/`,
+> `intelligence/adapter/`, `core/model/`, and `feature/race/{ObservationPresenter,RaceInsightUi}`
+> physically moved out of `:app` into a new plain Kotlin/JVM `:core` module
+> so a Compose Desktop target (`:desktop`) can share the same engine — see
+> [Desktop.md](Desktop.md). Package names are unchanged (so every `import`
+> below is still correct), only which Gradle module the file lives in. Read
+> "`app/src/main/java/com/projectapex/domain/...`" below as
+> "`core/src/main/kotlin/com/projectapex/domain/...`" — the rest of this
+> document, including the design rationale, is otherwise still accurate.
+> `:app` now depends on `:core`; `:core` has no Android dependency, same
+> discipline as `:intelligence`. A full pass to update every path in this
+> document is tracked as a documentation follow-up, not done inline here.
+
 ## Overview
 
 Project Apex is a single-activity Compose application built on MVVM:
