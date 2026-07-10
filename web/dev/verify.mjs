@@ -1,5 +1,5 @@
 /**
- * End-to-end verification of the Project Velocity web app.
+ * End-to-end verification of the Project Apex web app.
  * Spawns the mock OpenF1 server, drives the app in headless Chromium via
  * Playwright, and asserts the replay, team-radio, demo, settings and mobile
  * paths all work. Exits non-zero on any failure.
@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const PORT = 8199;
 const BASE = `http://localhost:${PORT}`;
-const SHOT = process.env.SHOT_DIR || mkdtempSync(join(tmpdir(), "velocity-verify-"));
+const SHOT = process.env.SHOT_DIR || mkdtempSync(join(tmpdir(), "apex-verify-"));
 const failures = [];
 const pageErrors = [];
 const check = (name, cond, detail = "") => {
@@ -45,6 +45,24 @@ try {
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   page.on("console", m => { if (m.type() === "error") pageErrors.push("console: " + m.text()); });
   page.on("pageerror", e => pageErrors.push("pageerror: " + e.message));
+
+  // Seed a fake key (so Claude features activate) and a legacy velocity.* value
+  // (so we can assert the one-time key migration). Stub the Anthropic API with
+  // a canned SSE stream — CI exercises the real streaming render path, no key needed.
+  await page.addInitScript(() => {
+    localStorage.setItem("apex.anthropicKey", "sk-test-not-real");
+    if (!localStorage.getItem("apex.model")) localStorage.setItem("velocity.model", "claude-test-model");
+  });
+  const sse = [
+    `data: {"type":"message_start","message":{"model":"claude-test-model"}}`,
+    `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"- **Undercut watch**: NOR is inside "}}`,
+    `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"the pit-loss window behind VER."}}`,
+    `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
+    `data: {"type":"message_stop"}`,
+    "",
+  ].join("\n\n");
+  await page.route("**/api.anthropic.com/**", route =>
+    route.fulfill({ status: 200, contentType: "text/event-stream", body: sse }));
 
   /* ---- 1. replay path against the mock OpenF1 API ---- */
   await page.goto(`${BASE}/index.html?api=${BASE}/v1`);
@@ -117,6 +135,30 @@ try {
   check("brief: includes team radio section", brief.includes("Team radio traffic"));
   check("brief: includes strategy model", brief.includes("Strategy model"));
 
+  /* ---- 1a. Claude integration (stubbed SSE endpoint) ---- */
+  check("brand: page title is Project Apex", (await page.title()).includes("Project Apex"));
+  check("config: velocity.* key migrated to apex.*",
+    await page.evaluate(() => localStorage.getItem("apex.model")) === "claude-test-model");
+
+  await page.click("#btnAsk");
+  await page.waitForTimeout(1200);
+  const aiCards = await page.locator("#aiFeed .ai-card").count();
+  check("ai: card appears after Ask Claude", aiCards === 1);
+  const aiBody = aiCards ? await page.locator("#aiFeed .ai-card .body").first().innerHTML() : "";
+  check("ai: streamed markdown rendered", aiBody.includes("<b>Undercut watch</b>") && aiBody.includes("pit-loss window"), aiBody.slice(0, 80));
+
+  await page.evaluate(() => addInsight({ icon: "⚔️", prio: 2, title: "Battle for P1", desc: "Verification battle event." }));
+  await page.locator("#feed .explain").first().click();
+  await page.waitForTimeout(1200);
+  const explainHdr = await page.locator("#aiFeed .ai-card .hdr b").first().textContent();
+  check("ai: explain-this card streams in", explainHdr.includes("Claude explains"), explainHdr);
+
+  await page.evaluate(() => { S.chequered = true; raceReport(); });
+  await page.waitForTimeout(1200);
+  const reportHdr = await page.locator("#aiFeed .ai-card .hdr b").first().textContent();
+  check("ai: race report card streams in", reportHdr.includes("Race report"), reportHdr);
+  await page.evaluate(() => { S.chequered = false; });
+
   /* ---- 1b. qualifying: segment inference, drop zone, cutoff gaps ---- */
   await page.goto(`${BASE}/index.html?api=${BASE}/v1&session=77003`);
   await page.waitForTimeout(2500);
@@ -150,7 +192,7 @@ try {
   await page.click("#btnSettings");
   await page.fill("#inPoll", "7");
   await page.click("#btnSaveSettings");
-  check("settings: pollSec persisted", await page.evaluate(() => localStorage.getItem("velocity.pollSec")) === "7");
+  check("settings: pollSec persisted", await page.evaluate(() => localStorage.getItem("apex.pollSec")) === "7");
 
   /* ---- 4. mobile layout sanity ---- */
   await page.setViewportSize({ width: 400, height: 800 });

@@ -1,6 +1,6 @@
 {
-  "name": "Project Velocity — F1 Gaps & Insights",
-  "short_name": "Velocity",
+  "name": "Project Apex — F1 Gaps & Insights",
+  "short_name": "Apex",
   "description": "Live F1 timing, proper gaps, race trace and AI race intelligence.",
   "start_url": "./index.html",
   "scope": "./",

@@ -1,4 +1,4 @@
-# Project Velocity — the zero-faff F1 gaps & insights app
+# Project Apex — the zero-faff F1 gaps & insights app
 
 **Live now: <https://robhall1990.github.io/ProjectApex/>** — open it on your phone,
 Chrome menu → *Add to Home screen* installs it like a native app.
@@ -42,7 +42,7 @@ fully offline).
 | **Head to head** | Pick any two drivers (auto-follows your focused driver): gap-over-time chart, tyre/pit comparison, last-five-laps delta table. |
 | **Race intelligence** | Auto-detected battles, drivers closing in, tyre-offset threats, tyre cliffs, pit stops, overtakes, safety cars and flags. |
 | **Team radio 📻** | Every radio clip OpenF1 publishes, playable in place and tagged with driver + lap — hear the calls the broadcast never plays. Click a driver on the timing board to spotlight their messages. |
-| **✦ Ask Claude** | Sends the current timing snapshot to Claude for a strategist's read (undercut windows, threats, what to watch). Needs your own Anthropic API key (Settings ⚙︎). |
+| **✦ Ask Claude** | Sends the current timing snapshot to Claude for a strategist's read — responses stream in live as Claude writes. Every intelligence-feed event has a ✦ button: *explain this* in plain language. When the chequered flag drops on a live/demo race, Claude writes an automatic race report. Needs your own Anthropic API key (Settings ⚙︎). |
 | **Race trace** | Every driver's gap to the leader's average pace, lap by lap — the chart that shows the *whole* race shape. Hover for per-lap gaps. |
 | **Replay** | Any completed session back to 2023: scrub, play at 1×–120×. Great for testing before a race weekend. |
 | **Demo** | Fully synthetic 30-lap race through the real pipeline — works offline. |
