@@ -37,6 +37,9 @@ fully offline).
 | **Timing board** | Position (with ▲▼ places gained/lost), gap to leader, interval, last lap (purple = session best, green = personal best), tyre compound + age, pit count. In practice/quali: best lap + delta ordering. Click any driver to follow them across every panel. |
 | **Track gaps** | The field laid out on a strip where distance = time gap (√ scale so battles stay readable). |
 | **Weather** | Track/air temperature and rain in the header, straight from the circuit. |
+| **Strategy** | Live pit-stop model: observed tyre degradation (s/lap), projected pit windows, and undercut reads — "NOR jumps VER in ~2 laps if he pits now". |
+| **Qualifying mode** | Q1/Q2/Q3 detection, per-segment ordering, the drop zone highlighted with each driver's gap to the cutoff. |
+| **Head to head** | Pick any two drivers (auto-follows your focused driver): gap-over-time chart, tyre/pit comparison, last-five-laps delta table. |
 | **Race intelligence** | Auto-detected battles, drivers closing in, tyre-offset threats, tyre cliffs, pit stops, overtakes, safety cars and flags. |
 | **Team radio 📻** | Every radio clip OpenF1 publishes, playable in place and tagged with driver + lap — hear the calls the broadcast never plays. Click a driver on the timing board to spotlight their messages. |
 | **✦ Ask Claude** | Sends the current timing snapshot to Claude for a strategist's read (undercut windows, threats, what to watch). Needs your own Anthropic API key (Settings ⚙︎). |
