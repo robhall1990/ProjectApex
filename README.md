@@ -1,15 +1,13 @@
-# Project Velocity
+# Project Apex
 
-The smartest way to watch Formula 1. *(Formerly Project Apex — to finish the rename,
-use GitHub → Settings → General → rename the repository to `ProjectVelocity`; old URLs
-redirect automatically.)*
+The smartest way to watch Formula 1.
 
 ## ⚡ The working MVP (start here)
 
 **Live at <https://robhall1990.github.io/ProjectApex/>** — on Android, Chrome →
 *Add to Home screen* installs it as an app.
 
-**[`web/`](web/) contains Project Velocity, a working zero-build web app** that does the
+**[`web/`](web/) contains the Project Apex web app, a working zero-build MVP** that does the
 thing today: real F1 timing (gaps, intervals, tyres, pits) from the
 [OpenF1 API](https://openf1.org), a gap ladder, the classic race trace, live weather,
 playable team-radio clips, a live strategy model (tyre degradation, pit windows,

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0b0e14">
-<title>Project Velocity — F1 Gaps &amp; Insights</title>
+<title>Project Apex — F1 Gaps &amp; Insights</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.json">
 <style>
@@ -126,6 +126,12 @@
   .ai-card .body ul { margin: 4px 0 4px 18px; }
   .ai-card .body li { margin: 3px 0; }
   .ai-note { color: var(--muted); font-size: 12px; }
+  .ai-card .cursor { color: var(--purple); animation: blink 1s steps(2) infinite; }
+  .ai-card .thinking { color: var(--muted); }
+  @keyframes blink { 50% { opacity: 0; } }
+  .insight .when { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .insight .explain { border: none; background: none; color: var(--purple); cursor: pointer; font-size: 12px; padding: 0; opacity: 0.55; }
+  .insight .explain:hover { opacity: 1; }
 
   /* Team radio */
   #radioList { display: flex; flex-direction: column; gap: 6px; }
@@ -199,7 +205,7 @@
 <body>
 
 <header>
-  <div class="brand">PROJECT <em>VELOCITY</em></div>
+  <div class="brand">PROJECT <em>APEX</em></div>
   <div class="picker">
     <select id="selYear" aria-label="Season"></select>
     <select id="selMeeting" aria-label="Grand Prix"></select>
@@ -374,22 +380,23 @@ function teamColor(hex) {
 }
 
 /* ============================== config ============================== */
-// one-time migration from the pre-rename "apex.*" keys
+// one-time migration from the interim "velocity.*" keys (the app began and
+// ended life as Project Apex; nothing is lost either way)
 for (const k of ["of1Token", "anthropicKey", "model", "autoAI", "pollSec"]) {
-  const old = localStorage.getItem("apex." + k);
-  if (old != null && localStorage.getItem("velocity." + k) == null) localStorage.setItem("velocity." + k, old);
+  const old = localStorage.getItem("velocity." + k);
+  if (old != null && localStorage.getItem("apex." + k) == null) localStorage.setItem("apex." + k, old);
 }
 const cfg = {
-  get of1Token()      { return localStorage.getItem("velocity.of1Token") || ""; },
-  set of1Token(v)     { localStorage.setItem("velocity.of1Token", v); },
-  get anthropicKey()  { return localStorage.getItem("velocity.anthropicKey") || ""; },
-  set anthropicKey(v) { localStorage.setItem("velocity.anthropicKey", v); },
-  get model()         { return localStorage.getItem("velocity.model") || "claude-opus-4-8"; },
-  set model(v)        { localStorage.setItem("velocity.model", v); },
-  get autoAI()        { return localStorage.getItem("velocity.autoAI") === "1"; },
-  set autoAI(v)       { localStorage.setItem("velocity.autoAI", v ? "1" : "0"); },
-  get pollSec()       { return Math.max(3, parseInt(localStorage.getItem("velocity.pollSec") || "5", 10)); },
-  set pollSec(v)      { localStorage.setItem("velocity.pollSec", String(v)); },
+  get of1Token()      { return localStorage.getItem("apex.of1Token") || ""; },
+  set of1Token(v)     { localStorage.setItem("apex.of1Token", v); },
+  get anthropicKey()  { return localStorage.getItem("apex.anthropicKey") || ""; },
+  set anthropicKey(v) { localStorage.setItem("apex.anthropicKey", v); },
+  get model()         { return localStorage.getItem("apex.model") || "claude-opus-4-8"; },
+  set model(v)        { localStorage.setItem("apex.model", v); },
+  get autoAI()        { return localStorage.getItem("apex.autoAI") === "1"; },
+  set autoAI(v)       { localStorage.setItem("apex.autoAI", v ? "1" : "0"); },
+  get pollSec()       { return Math.max(3, parseInt(localStorage.getItem("apex.pollSec") || "5", 10)); },
+  set pollSec(v)      { localStorage.setItem("apex.pollSec", String(v)); },
 };
 const API_BASE = new URLSearchParams(location.search).get("api") || "https://api.openf1.org/v1";
 
@@ -559,7 +566,13 @@ function applyRaceControl(r, silent) {
   } else if (r.flag === "RED") S.flag = "RED";
   else if (r.flag === "YELLOW" || r.flag === "DOUBLE YELLOW") S.flag = "YELLOW";
   else if (r.flag === "GREEN" || r.flag === "CLEAR") { if (S.flag !== "SC" && S.flag !== "VSC") S.flag = null; }
-  else if (r.flag === "CHEQUERED") { S.chequered = true; S.flag = null; }
+  else if (r.flag === "CHEQUERED") {
+    const first = !S.chequered;
+    S.chequered = true; S.flag = null;
+    if (first && !silent && S.isRace && (S.mode === "live" || S.mode === "demo") && cfg.anthropicKey) {
+      setTimeout(raceReport, 4000);   // let the final laps land before writing the report
+    }
+  }
   if (/TRACK CLEAR|GREEN LIGHT/i.test(msg)) S.flag = null;
 
   const important = r.flag === "RED" || cat === "SafetyCar" || /SAFETY CAR|INVESTIGAT|PENALTY|DELETED/i.test(msg);
@@ -1124,13 +1137,18 @@ function sessionClockLabel() {
 function renderFeed() {
   const feed = $("#feed");
   $("#feedEmpty").style.display = S.insights.length ? "none" : "block";
-  feed.innerHTML = S.insights.slice(0, 18).map(i => `
+  feed.innerHTML = S.insights.slice(0, 18).map((i, idx) => `
     <div class="insight prio-${i.prio}">
       <div class="ico">${i.icon}</div>
       <div><div class="t">${esc(i.title)}</div><div class="d">${esc(i.desc)}</div></div>
-      <div class="when">${esc(i.at)}</div>
+      <div class="when">${esc(i.at)}<button class="explain" data-i="${idx}" title="Ask Claude to explain this">✦</button></div>
     </div>`).join("");
 }
+
+$("#feed").addEventListener("click", e => {
+  const btn = e.target.closest(".explain");
+  if (btn) explainInsight(parseInt(btn.dataset.i, 10));
+});
 
 /* ============================== team radio ============================== */
 const radioPlayer = new Audio();
@@ -1426,8 +1444,24 @@ driver complaints — read them together with the pit and tyre data).
 Be specific — name drivers, gaps in seconds, tyre ages. Do not restate the running order. If the data is thin (early session), say what to watch for next.
 Output plain markdown bullets only, no preamble.`;
 
-async function askClaude(auto = false) {
-  if (S.aiBusy) return;
+/* A card in the AI feed that fills in as tokens stream. */
+function makeAICard(label, model) {
+  const el = document.createElement("div");
+  el.className = "ai-card";
+  el.innerHTML = `<div class="hdr"><b>✦ ${esc(label)}</b><span>${esc(model)} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></div><div class="body"><span class="thinking">…</span></div>`;
+  const feed = $("#aiFeed");
+  feed.prepend(el);
+  while (feed.children.length > 3) feed.lastChild.remove();
+  return {
+    setBody(md) { el.querySelector(".body").innerHTML = mdLite(md) + '<span class="cursor">▍</span>'; },
+    done(md) { el.querySelector(".body").innerHTML = mdLite(md); },
+    remove() { el.remove(); },
+  };
+}
+
+/* Streaming call to the Anthropic API — text appears as Claude writes it. */
+async function callClaude({ userText, label = "Claude", maxTokens = 800, auto = false }) {
+  if (S.aiBusy) { if (!auto) toast("Claude is already thinking…"); return; }
   if (!cfg.anthropicKey) {
     if (!auto) { $("#settings").showModal(); toast("Add your Anthropic API key to enable Claude insights"); }
     return;
@@ -1435,6 +1469,7 @@ async function askClaude(auto = false) {
   if (!S.session && S.mode !== "demo") { if (!auto) toast("Load a session first"); return; }
   S.aiBusy = true;
   const btn = $("#btnAsk"); btn.disabled = true; btn.textContent = "✦ Thinking…";
+  const card = makeAICard(label, cfg.model);
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -1446,34 +1481,77 @@ async function askClaude(auto = false) {
       },
       body: JSON.stringify({
         model: cfg.model,
-        max_tokens: 800,
+        max_tokens: maxTokens,
+        stream: true,
         system: AI_SYSTEM,
-        messages: [{ role: "user", content: buildBrief() }],
+        messages: [{ role: "user", content: userText }],
       }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err?.error?.message || ("Anthropic API " + res.status));
     }
-    const msg = await res.json();
-    if (msg.stop_reason === "refusal") throw new Error("Claude declined this request.");
-    const text = (msg.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
-    if (text) renderAICard(text, msg.model || cfg.model);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", text = "", stop = null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+        if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
+          text += ev.delta.text;
+          card.setBody(text);
+        } else if (ev.type === "message_delta" && ev.delta?.stop_reason) {
+          stop = ev.delta.stop_reason;
+        } else if (ev.type === "error") {
+          throw new Error(ev.error?.message || "stream error");
+        }
+      }
+    }
+    if (stop === "refusal") throw new Error("Claude declined this request.");
+    text = text.trim();
+    if (text) card.done(text); else card.remove();
   } catch (e) {
+    card.remove();
     if (!auto) toast("Claude: " + e.message, 6000);
   } finally {
     S.aiBusy = false; btn.disabled = false; btn.textContent = "✦ Ask Claude";
   }
 }
 
-function renderAICard(text, model) {
-  const html = mdLite(text);
-  const el = document.createElement("div");
-  el.className = "ai-card";
-  el.innerHTML = `<div class="hdr"><b>✦ Claude</b><span>${esc(model)} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></div><div class="body">${html}</div>`;
-  const feed = $("#aiFeed");
-  feed.prepend(el);
-  while (feed.children.length > 3) feed.lastChild.remove();
+function askClaude(auto = false) {
+  return callClaude({ userText: buildBrief(), auto });
+}
+
+/* "Explain this" — expand a single intelligence-feed event for the viewer. */
+function explainInsight(i) {
+  const ins = S.insights[i];
+  if (!ins) return;
+  return callClaude({
+    label: "Claude explains",
+    maxTokens: 350,
+    userText: buildBrief() +
+      `\n\nExplain this specific event to a fan in 2–3 sentences — what it means, why it matters right now, and what to watch next. Plain prose, no bullets:\n[${ins.at}] ${ins.title}: ${ins.desc}`,
+  });
+}
+
+/* Auto race report when the flag drops (live/demo, key present). */
+function raceReport() {
+  if (!S.chequered || !S.isRace) return;
+  return callClaude({
+    label: "Race report",
+    maxTokens: 700,
+    auto: true,
+    userText: buildBrief() +
+      "\n\nThe race just finished. Write a short race report: the winner and how the race was won, the strategy call(s) that decided it, the best battle, and one standout drive. 4–6 punchy markdown bullets.",
+  });
 }
 
 function mdLite(text) {
@@ -1757,7 +1835,7 @@ const DEMO_GRID = [
 function startDemo() {
   stopEngines(); resetData();
   S.mode = "demo";
-  S.session = { session_name: "Demo Race", session_type: "Race", circuit_short_name: "Velocity Park", country_name: "Demoland", year: new Date().getFullYear(), session_key: 0 };
+  S.session = { session_name: "Demo Race", session_type: "Race", circuit_short_name: "Apex Park", country_name: "Demoland", year: new Date().getFullYear(), session_key: 0 };
   S.isRace = true; S.totalLaps = 30;
   S.weather = { air_temperature: 24, track_temperature: 41, rainfall: 0 };
   banner(null);

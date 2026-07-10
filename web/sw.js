@@ -1,9 +1,9 @@
-/* Project Velocity service worker.
+/* Project Apex service worker.
  * Network-first with cache fallback for the app shell, so the installed PWA
  * starts instantly and still opens with no signal (Demo mode works offline).
  * Timing data (/v1/, api.openf1.org) and Anthropic calls are never cached.
  */
-const CACHE = "velocity-v2026-07-10";
+const CACHE = "apex-v2026-07-10";
 const SHELL = ["./", "./index.html", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", e => {
