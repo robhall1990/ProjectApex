@@ -127,6 +127,17 @@
   .ai-card .body li { margin: 3px 0; }
   .ai-note { color: var(--muted); font-size: 12px; }
 
+  /* Team radio */
+  #radioList { display: flex; flex-direction: column; gap: 6px; }
+  .radio-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface2); font-size: 12.5px; }
+  .radio-row.dim { opacity: 0.35; }
+  .radio-row.playing { border-color: rgba(225,6,0,0.55); }
+  .radio-row .when { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; font-family: var(--mono); }
+  .radio-row .radio-text { color: var(--ink2); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .radio-play { width: 26px; height: 26px; flex: none; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; font-size: 11px; line-height: 1; }
+  .radio-play:hover { border-color: var(--red); }
+  .radio-more { color: var(--muted); font-size: 11px; text-align: center; padding-top: 2px; }
+
   /* Race trace */
   .trace-wrap { position: relative; }
   #trace { width: 100%; height: 340px; display: block; }
@@ -219,6 +230,11 @@
         <div id="aiFeed"></div>
         <div class="feed" id="feed"></div>
         <div class="empty" id="feedEmpty">Insights will appear here as the session unfolds.</div>
+      </div>
+      <div class="card" id="radioCard" style="display:none">
+        <h2>Team radio 📻 <span class="right" id="radioCount"></span></h2>
+        <div id="radioList"></div>
+        <div class="radio-more" id="radioMore"></div>
       </div>
     </div>
   </div>
@@ -346,6 +362,8 @@ const S = {
   stints: new Map(),               // n -> [stint rows]
   pits: new Map(),                 // n -> [pit rows]
   raceControl: [],
+  radio: [],                       // team radio rows {date, driver_number, recording_url, demo_text?}
+  radioSeen: new Set(),            // date|driver keys, dedupes incremental fetches
   flag: null,                      // 'YELLOW' | 'RED' | 'SC' | 'VSC' | null
   chequered: false,
   maxLap: 0,
@@ -368,15 +386,18 @@ function resetData() {
     drivers: new Map(), latestInterval: new Map(), intervalHist: new Map(),
     latestPos: new Map(), posDate: new Map(), laps: new Map(), bestLap: new Map(),
     sessionBest: null, stints: new Map(), pits: new Map(), raceControl: [],
+    radio: [], radioSeen: new Set(),
     flag: null, chequered: false, maxLap: 0, totalLaps: null,
     weather: null, firstPos: new Map(), focus: null,
     insights: [], seenInsightKeys: new Map(), cursors: {}, pollCount: 0, backoff: 0,
   });
+  stopRadioPlayback();
   $("#aiFeed").innerHTML = "";
 }
 
 function stopEngines() {
   S.epoch++;
+  stopRadioPlayback();
   clearInterval(S.pollTimer); S.pollTimer = null;
   if (S.replay) { clearInterval(S.replay.timer); }
   if (S.demo) { clearInterval(S.demo.timer); S.demo = null; }
@@ -471,6 +492,13 @@ function ingest(batch, opts = {}) {
     S.raceControl.push(r);
     applyRaceControl(r, silent);
   }
+
+  if (batch.team_radio) for (const r of batch.team_radio) {
+    const key = (r.date || "") + "|" + r.driver_number;
+    if (S.radioSeen.has(key)) continue;
+    S.radioSeen.add(key);
+    S.radio.push(r);
+  }
 }
 
 function applyRaceControl(r, silent) {
@@ -559,6 +587,7 @@ function render() {
   renderLadder(rows);
   renderTrace();
   renderFeed();
+  renderRadio();
 }
 
 function renderHeader() {
@@ -856,6 +885,73 @@ function renderFeed() {
     </div>`).join("");
 }
 
+/* ============================== team radio ============================== */
+const radioPlayer = new Audio();
+let radioPlayingKey = null;
+radioPlayer.addEventListener("ended", () => { radioPlayingKey = null; renderRadio(); });
+radioPlayer.addEventListener("error", () => {
+  if (radioPlayingKey) { radioPlayingKey = null; toast("Couldn’t load this radio clip"); renderRadio(); }
+});
+
+function stopRadioPlayback() {
+  radioPlayer.pause();
+  radioPlayingKey = null;
+}
+
+function lapAtDate(n, t) {
+  const m = S.laps.get(n); if (!m || !isFinite(t)) return null;
+  let best = null;
+  for (const r of m.values()) {
+    const ts = Date.parse(r.date_start);
+    if (isFinite(ts) && ts <= t && (!best || ts > best.ts)) best = { ts, lap: r.lap_number };
+  }
+  return best ? best.lap : null;
+}
+
+const RADIO_SHOWN = 14;
+function renderRadio() {
+  const card = $("#radioCard");
+  if (!S.radio.length) { card.style.display = "none"; return; }
+  card.style.display = "block";
+  const sorted = [...S.radio].sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+  const rows = sorted.slice(0, RADIO_SHOWN);
+  $("#radioCount").textContent = S.radio.length + " message" + (S.radio.length === 1 ? "" : "s");
+  $("#radioMore").textContent = S.radio.length > RADIO_SHOWN ? `showing latest ${RADIO_SHOWN} of ${S.radio.length}` : "";
+  $("#radioList").innerHTML = rows.map(r => {
+    const n = r.driver_number, d = S.drivers.get(n) || {};
+    const t = Date.parse(r.date);
+    const lap = S.isRace ? lapAtDate(n, t) : null;
+    const when = lap ? "L" + lap : (isFinite(t) ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
+    const key = (r.date || "") + "|" + n;
+    const dim = S.focus != null && S.focus !== n;
+    const playing = radioPlayingKey === key;
+    const btn = r.recording_url
+      ? `<button class="radio-play" data-key="${esc(key)}" data-url="${esc(r.recording_url)}" title="Play radio clip">${playing ? "⏸" : "▶"}</button>`
+      : `<span class="radio-play" style="opacity:.35;text-align:center;line-height:24px">📻</span>`;
+    const text = r.demo_text ? `<span class="radio-text">“${esc(r.demo_text)}”</span>` : `<span class="radio-text" style="color:var(--muted)">radio message</span>`;
+    return `<div class="radio-row${dim ? " dim" : ""}${playing ? " playing" : ""}">
+      ${btn}
+      <span class="tla"><span class="teambar" style="background:${teamColor(d.team_colour)}"></span>${esc(tla(n))}</span>
+      ${text}
+      <span class="when">${esc(when)}</span>
+    </div>`;
+  }).join("");
+}
+
+$("#radioList").addEventListener("click", e => {
+  const btn = e.target.closest(".radio-play[data-url]");
+  if (!btn) return;
+  const key = btn.dataset.key;
+  if (radioPlayingKey === key) {
+    stopRadioPlayback();
+  } else {
+    radioPlayer.src = btn.dataset.url;
+    radioPlayingKey = key;
+    radioPlayer.play().catch(() => { radioPlayingKey = null; toast("Couldn’t play this radio clip"); renderRadio(); });
+  }
+  renderRadio();
+});
+
 /* Trend detectors — run periodically over interval history. */
 function runDetectors() {
   if (!S.isRace || S.chequered || S.maxLap < 2) return;
@@ -940,12 +1036,23 @@ function buildBrief() {
   if (ev.length) { lines.push("", "Recent events (newest first):", ...ev); }
   const rc = S.raceControl.slice(-5).map(r => `- ${r.message}`);
   if (rc.length) { lines.push("", "Race control:", ...rc); }
+  if (S.radio.length) {
+    const recent = [...S.radio].sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0)).slice(0, 10);
+    lines.push("", "Team radio traffic (newest first; audio not transcribed unless quoted):");
+    for (const r of recent) {
+      const lap = S.isRace ? lapAtDate(r.driver_number, Date.parse(r.date)) : null;
+      lines.push(`- ${tla(r.driver_number)}${lap ? ` (L${lap})` : ""}${r.demo_text ? `: "${r.demo_text}"` : ""}`);
+    }
+  }
   return lines.join("\n");
 }
 
 const AI_SYSTEM = `You are a sharp Formula 1 race strategist giving a fan a live read of the session.
 From the timing snapshot, produce 2–4 short bullet insights a broadcast strategist would actually say:
 undercut/overcut windows opening, tyre-offset threats, battles that matter for the result, pace trends, stint-length inferences.
+A team-radio log may be included: quoted lines are transcripts you can use directly; unquoted entries are untranscribed
+audio, but who is on the radio and when is itself a signal (radio bursts cluster around pit calls, strategy switches,
+driver complaints — read them together with the pit and tyre data).
 Be specific — name drivers, gaps in seconds, tyre ages. Do not restate the running order. If the data is thin (early session), say what to watch for next.
 Output plain markdown bullets only, no preamble.`;
 
@@ -1150,6 +1257,7 @@ async function pollTick() {
     if (S.pollCount % 3 === 1) {
       jobs.push(fetchInc("race_control").then(r => batch.race_control = r).catch(swallow));
       jobs.push(fetchInc("pit").then(r => batch.pit = r).catch(swallow));
+      jobs.push(fetchInc("team_radio").then(r => batch.team_radio = r).catch(swallow));
     }
     if (S.pollCount % 6 === 1) {
       jobs.push(of("/stints", { session_key: S.session.session_key }).then(r => batch.stints = r).catch(swallow));
@@ -1174,7 +1282,7 @@ async function startReplay(sessionKey, ep) {
   const key = { session_key: sessionKey };
   let data;
   try {
-    const [intervals, position, laps, stints, pit, race_control, weather] = await Promise.all([
+    const [intervals, position, laps, stints, pit, race_control, weather, team_radio] = await Promise.all([
       S.isRace ? of("/intervals", key).catch(() => []) : Promise.resolve([]),
       of("/position", key).catch(() => []),
       of("/laps", key).catch(() => []),
@@ -1182,8 +1290,9 @@ async function startReplay(sessionKey, ep) {
       of("/pit", key).catch(() => []),
       of("/race_control", key).catch(() => []),
       of("/weather", key).catch(() => []),
+      of("/team_radio", key).catch(() => []),
     ]);
-    data = { intervals, position, laps, stints, pit, race_control, weather };
+    data = { intervals, position, laps, stints, pit, race_control, weather, team_radio };
   } catch (e) { apiTrouble(e); return; }
   if (ep !== S.epoch) return;   // user switched away while we were loading
   banner(null);
@@ -1196,6 +1305,7 @@ async function startReplay(sessionKey, ep) {
   push(data.pit, "pit", "date");
   push(data.race_control, "race_control", "date");
   push(data.weather, "weather", "date");
+  push(data.team_radio, "team_radio", "date");
   log.sort((a, b) => a.t - b.t);
   if (!log.length) { banner("No timing data available for this session yet — OpenF1 usually publishes shortly after the chequered flag."); return; }
   // stints have no timestamps — apply lazily by lap
@@ -1217,7 +1327,7 @@ function seekReplay(t) {
     ingest({ drivers, stints }, { silent: true });
     R.ptr = 0;
   }
-  const batch = { intervals: [], position: [], laps: [], pit: [], race_control: [], weather: [] };
+  const batch = { intervals: [], position: [], laps: [], pit: [], race_control: [], weather: [], team_radio: [] };
   while (R.ptr < R.log.length && R.log[R.ptr].t <= t) { const e = R.log[R.ptr++]; batch[e.type].push(e.r); }
   const backfill = (t - R.t0) < 1000 || batch.position.length + batch.laps.length > 400;
   ingest(batch, { silent: backfill });
@@ -1299,7 +1409,8 @@ function startDemo() {
     if (S.mode !== "demo") return;
     const dt = 6;                            // 6 race-seconds per real second
     simT += dt;
-    const batch = { intervals: [], position: [], laps: [], pit: [], race_control: [], stints: [] };
+    const batch = { intervals: [], position: [], laps: [], pit: [], race_control: [], stints: [], team_radio: [] };
+    const radioSay = (n, text) => batch.team_radio.push({ driver_number: n, date: iso(), demo_text: text, recording_url: null });
 
     for (const c of cars) {
       if (c.retired) continue;
@@ -1327,6 +1438,7 @@ function startDemo() {
           c.tyreAge = 0; c.stintNo++;
           batch.pit.push({ driver_number: c.n, lap_number: c.lap, pit_duration: stop * 0.11 + 2, date: iso() });
           batch.stints.push({ driver_number: c.n, stint_number: c.stintNo, compound: c.compound, lap_start: c.lap, tyre_age_at_start: 0 });
+          if ([1, 4, 81, 16, 44, 63].includes(c.n)) radioSay(c.n, "Box, box. Box this lap.");
         }
       }
     }
@@ -1347,6 +1459,14 @@ function startDemo() {
 
     if (Math.floor(simT / dt) === 40) batch.race_control.push({ date: iso(), category: "Flag", flag: "YELLOW", message: "YELLOW IN SECTOR 7 — CAR SLOW AT TURN 4" });
     if (Math.floor(simT / dt) === 55) batch.race_control.push({ date: iso(), category: "Flag", flag: "CLEAR", message: "TRACK CLEAR" });
+
+    // scripted radio to go with the NOR-hunts-VER storyline
+    const tickN = Math.floor(simT / dt);
+    if (tickN === 15) radioSay(1, "Tyres feel good so far, we can extend this stint if we need to.");
+    if (tickN === 95) radioSay(4, "Gap to Verstappen two point one. You're quickest in sector one — push now.");
+    if (tickN === 140) radioSay(1, "My rears are starting to go, mate. How many laps can these do?");
+    if (tickN === 180) radioSay(16, "What position is Hamilton in? Are we racing him or the Mercedes?");
+    if (tickN === 220) radioSay(4, "DRS enabled. Let's get him, mate.");
 
     if (leader.lap > 30 && !S.chequered) batch.race_control.push({ date: iso(), category: "Flag", flag: "CHEQUERED", message: "CHEQUERED FLAG" });
 

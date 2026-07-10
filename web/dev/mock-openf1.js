@@ -34,7 +34,26 @@ const GRID = [
   [14, "ALO", "Fernando Alonso", "Aston Martin",    "229971", 92.9],
 ];
 
-const DB = { drivers: [], intervals: [], position: [], laps: [], stints: [], pit: [], race_control: [], weather: [] };
+const DB = { drivers: [], intervals: [], position: [], laps: [], stints: [], pit: [], race_control: [], weather: [], team_radio: [] };
+
+/* Tiny synthesized WAV (0.7s two-tone beep) served at /audio/radio.wav so the
+   app's team-radio play buttons are exercisable offline. */
+function makeBeepWav() {
+  const rate = 8000, secs = 0.7, n = Math.floor(rate * secs);
+  const data = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) {
+    const f = i < n / 2 ? 660 : 880;
+    const amp = Math.sin(2 * Math.PI * f * i / rate) * 0.35 * 32767;
+    data.writeInt16LE(Math.round(amp), i * 2);
+  }
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + data.length, 4); h.write("WAVE", 8);
+  h.write("fmt ", 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write("data", 36); h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
+const BEEP_WAV = makeBeepWav();
 
 function build() {
   const SK = 77002;
@@ -57,6 +76,7 @@ function build() {
           c.pitted = true; c.dist -= 21 / lapTime;
           DB.pit.push({ driver_number: c.n, lap_number: c.lap, pit_duration: 2.4, date: iso(t), session_key: 77002 });
           DB.stints.push({ driver_number: c.n, stint_number: 2, compound: "MEDIUM", lap_start: c.lap, tyre_age_at_start: 0, session_key: 77002 });
+          DB.team_radio.push({ driver_number: c.n, date: iso(t - 20), recording_url: "/audio/radio.wav", session_key: 77002, meeting_key: 9001 });
         }
       }
     }
@@ -70,6 +90,9 @@ function build() {
   }
   for (let t = 0; t <= 1300; t += 120) {
     DB.weather.push({ date: iso(t), air_temperature: 23.5, track_temperature: 38 + t / 200, rainfall: 0, wind_speed: 2.1, session_key: 77002 });
+  }
+  for (const [t, n] of [[150, 1], [420, 4], [700, 1], [980, 16]]) {
+    DB.team_radio.push({ driver_number: n, date: iso(t), recording_url: "/audio/radio.wav", session_key: 77002, meeting_key: 9001 });
   }
   DB.race_control.push({ date: iso(200), category: "Flag", flag: "YELLOW", message: "YELLOW IN SECTOR 2", session_key: 77002 });
   DB.race_control.push({ date: iso(260), category: "Flag", flag: "CLEAR", message: "TRACK CLEAR", session_key: 77002 });
@@ -119,6 +142,11 @@ http.createServer((req, res) => {
     else { res.writeHead(404); return res.end("[]"); }
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify(rows));
+  }
+
+  if (url.pathname === "/audio/radio.wav") {
+    res.writeHead(200, { "content-type": "audio/wav", "content-length": BEEP_WAV.length });
+    return res.end(BEEP_WAV);
   }
 
   // static
