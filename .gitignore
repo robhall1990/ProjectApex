@@ -16,3 +16,8 @@ local.properties
 
 # Android Studio project files
 /.idea/
+
+# Node (web e2e verification tooling)
+node_modules/
+/package.json
+/package-lock.json

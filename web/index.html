@@ -1520,6 +1520,9 @@ setInterval(() => {
 }, 1000);
 
 /* boot */
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}
 (async function boot() {
   render();
   armAutoAI();
