@@ -148,6 +148,21 @@ http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   res.setHeader("Access-Control-Allow-Origin", "*");
 
+  // OAuth2 password-grant token endpoint (mirrors api.openf1.org/token)
+  if (url.pathname === "/token" && req.method === "POST") {
+    let body = "";
+    req.on("data", c => (body += c));
+    req.on("end", () => {
+      const p = new URLSearchParams(body);
+      const user = p.get("username"), pass = p.get("password");
+      if (!user || !pass) { res.writeHead(422, { "content-type": "application/json" }); return res.end(JSON.stringify({ detail: "missing credentials" })); }
+      if (pass === "wrong") { res.writeHead(401, { "content-type": "application/json" }); return res.end(JSON.stringify({ detail: "bad credentials" })); }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ access_token: "mock-token-" + Date.now(), token_type: "bearer", expires_in: 1800 }));
+    });
+    return;
+  }
+
   if (url.pathname.startsWith("/v1/")) {
     const resource = url.pathname.slice(4);
     let rows;

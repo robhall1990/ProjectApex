@@ -194,6 +194,38 @@ try {
   await page.click("#btnSaveSettings");
   check("settings: pollSec persisted", await page.evaluate(() => localStorage.getItem("apex.pollSec")) === "7");
 
+  /* ---- 3a. OpenF1 sign-in against the mock /token endpoint ---- */
+  await page.click("#btnSettings");
+  await page.fill("#inOF1User", "test@example.com");
+  await page.fill("#inOF1Pass", "wrong");
+  await page.click("#btnOF1Login");
+  await page.waitForTimeout(400);
+  check("signin: wrong password shows error", (await page.locator("#of1Status").getAttribute("class")).includes("err"));
+  await page.fill("#inOF1Pass", "correct-horse");
+  await page.check("#inOF1Stay");
+  await page.click("#btnOF1Login");
+  await page.waitForTimeout(500);
+  check("signin: success status shown", (await page.locator("#of1Status").getAttribute("class")).includes("in"));
+  check("signin: token stored", (await page.evaluate(() => localStorage.getItem("apex.of1Token")) || "").startsWith("mock-token-"));
+  check("signin: expiry stored in the future", await page.evaluate(() => parseInt(localStorage.getItem("apex.of1Exp") || "0", 10)) > Date.now());
+  check("signin: credentials stored for auto-refresh", await page.evaluate(() => localStorage.getItem("apex.of1Pass")) === "correct-horse");
+  // token is sent as a bearer on the next OpenF1 request
+  const auth = await page.evaluate(async () => {
+    let seen = null;
+    const orig = window.fetch;
+    window.fetch = (u, o) => { if (String(u).includes("/v1/")) seen = (o?.headers?.Authorization) || null; return orig(u, o); };
+    await of("/sessions", { session_key: "latest" });
+    window.fetch = orig;
+    return seen;
+  });
+  check("signin: bearer sent on OpenF1 calls", (auth || "").startsWith("Bearer mock-token-"), auth || "(none)");
+  // sign out clears everything (dialog is still open from the sign-in above)
+  await page.click("#btnOF1Logout");
+  await page.waitForTimeout(200);
+  check("signin: sign-out clears token + creds", await page.evaluate(() =>
+    !localStorage.getItem("apex.of1Token") && !localStorage.getItem("apex.of1Pass")));
+  await page.click("#btnCloseSettings");
+
   /* ---- 4. mobile layout sanity ---- */
   await page.setViewportSize({ width: 400, height: 800 });
   await page.waitForTimeout(800);
@@ -201,7 +233,9 @@ try {
   check("mobile: no horizontal overflow", !hScroll);
   await page.screenshot({ path: `${SHOT}/mobile.png` });
 
-  check("no page errors", pageErrors.length === 0, pageErrors.join(" | "));
+  // the wrong-password sign-in test deliberately provokes one 401 — expected, not a bug
+  const realErrors = pageErrors.filter(e => !/401 \(Unauthorized\)/.test(e));
+  check("no page errors", realErrors.length === 0, realErrors.join(" | "));
 } finally {
   await browser.close();
   server.kill();
