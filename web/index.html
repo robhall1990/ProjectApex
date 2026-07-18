@@ -57,6 +57,8 @@
   .chip.live { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
   .chip.demo { color: #0b0e14; background: var(--warn); border-color: var(--warn); font-weight: 700; }
   .chip.replay { color: #fff; background: #3452c6; border-color: #3452c6; font-weight: 700; }
+  .chip.sync-ok { color: #35c46f; border-color: rgba(53,196,111,0.5); }
+  .chip.sync-stale { color: #0b0e14; background: var(--warn); border-color: var(--warn); font-weight: 700; }
   .chip.flag-YELLOW { color:#0b0e14; background: var(--warn); font-weight: 700; }
   .chip.flag-RED { color:#fff; background: var(--bad); font-weight: 700; }
   .chip.flag-SC, .chip.flag-VSC { color:#0b0e14; background: var(--warn); font-weight: 700; }
@@ -220,6 +222,7 @@
   </div>
   <div class="chips">
     <span class="chip" id="chipMode">idle</span>
+    <span class="chip" id="chipSync" style="display:none"></span>
     <span class="chip" id="chipLap" style="display:none"></span>
     <span class="chip" id="chipFlag" style="display:none"></span>
     <span class="chip" id="chipWx" style="display:none"></span>
@@ -490,7 +493,7 @@ const S = {
   insights: [],
   seenInsightKeys: new Map(),      // key -> expiry ts
   cursors: {},
-  pollTimer: null, pollCount: 0, backoff: 0,
+  pollTimer: null, pollCount: 0, backoff: 0, lastDataAt: 0,
   replay: null,                    // {log:[], ptr, t0, t1, t, playing, timer}
   demo: null,
   aiBusy: false, aiTimer: null,
@@ -506,7 +509,7 @@ function resetData() {
     flag: null, chequered: false, maxLap: 0, totalLaps: null,
     weather: null, firstPos: new Map(), focus: null,
     h2hA: null, h2hB: null, h2hManual: false,
-    insights: [], seenInsightKeys: new Map(), cursors: {}, pollCount: 0, backoff: 0,
+    insights: [], seenInsightKeys: new Map(), cursors: {}, pollCount: 0, backoff: 0, lastDataAt: 0,
   });
   stopRadioPlayback();
   $("#aiFeed").innerHTML = "";
@@ -772,6 +775,19 @@ function renderHeader() {
   const chipMode = $("#chipMode");
   chipMode.className = "chip " + (S.mode === "live" ? "live" : S.mode === "demo" ? "demo" : S.mode === "replay" ? "replay" : "");
   chipMode.textContent = S.mode === "live" ? "LIVE" : S.mode === "demo" ? "DEMO" : S.mode === "replay" ? "REPLAY" : "idle";
+
+  // live-data freshness: green while updates arrive, amber warning if the feed stalls
+  const sync = $("#chipSync");
+  if (S.mode === "live") {
+    sync.style.display = "";
+    if (!S.lastDataAt) { sync.className = "chip"; sync.textContent = "⏳ waiting for data"; }
+    else {
+      const age = Math.round((Date.now() - S.lastDataAt) / 1000);
+      const ok = age <= Math.max(12, cfg.pollSec * 3);
+      sync.className = "chip " + (ok ? "sync-ok" : "sync-stale");
+      sync.textContent = ok ? "● updating" : `⚠ stalled ${age < 120 ? age + "s" : Math.round(age / 60) + "m"}`;
+    }
+  } else sync.style.display = "none";
 
   const lapChip = $("#chipLap");
   const qi = qualiInfo();
@@ -1711,9 +1727,8 @@ async function loadSession(sessionKey) {
   const now = Date.now();
   const start = Date.parse(ses.date_start), end = Date.parse(ses.date_end);
   if (now < start - 10 * 60 * 1000) {
-    S.mode = "idle"; render();
-    banner(`⏳ ${ses.session_name} at ${ses.circuit_short_name} starts ${new Date(start).toLocaleString()}. Live polling will begin automatically — leave this open, or come back at lights out.`);
     startLive(); // harmless: returns empty until data flows
+    banner(`⏳ ${ses.session_name} at ${ses.circuit_short_name} starts ${new Date(start).toLocaleString()}. Live polling has begun — leave this open and the board fills in at lights out.`);
   } else if (now <= end + 30 * 60 * 1000) {
     startLive();
   } else {
@@ -1766,12 +1781,17 @@ async function pollTick() {
       fetchInc("position").then(r => batch.position = r).catch(swallow),
       fetchInc("laps", "date_start").then(r => batch.laps = r).catch(swallow),
     ];
+    // The driver list only appears on OpenF1 once a session goes live — keep
+    // asking until we have it (then refresh occasionally for late changes).
+    if (S.drivers.size === 0 || S.pollCount % 12 === 1) {
+      jobs.push(of("/drivers", { session_key: S.session.session_key }).then(r => batch.drivers = r).catch(swallow));
+    }
     if (S.pollCount % 3 === 1) {
       jobs.push(fetchInc("race_control").then(r => batch.race_control = r).catch(swallow));
       jobs.push(fetchInc("pit").then(r => batch.pit = r).catch(swallow));
       jobs.push(fetchInc("team_radio").then(r => batch.team_radio = r).catch(swallow));
     }
-    if (S.pollCount % 6 === 1) {
+    if (S.pollCount % 6 === 1 || (S.drivers.size > 0 && S.stints.size === 0)) {
       jobs.push(of("/stints", { session_key: S.session.session_key }).then(r => batch.stints = r).catch(swallow));
       jobs.push(of("/weather", { session_key: S.session.session_key }).then(r => batch.weather = r).catch(swallow));
     }
@@ -1779,7 +1799,8 @@ async function pollTick() {
     if (ep !== S.epoch) return;
     ingest(batch);
     render();
-    banner(null);
+    const got = Object.values(batch).some(a => a && a.length);
+    if (got) { S.lastDataAt = Date.now(); banner(null); }   // only clear the countdown/error banner once real data flows
   } catch (e) { /* individual errors handled below */ }
 }
 function swallow(e) {
@@ -2070,14 +2091,40 @@ $("#btnSaveSettings").addEventListener("click", () => {
 
 window.addEventListener("resize", () => renderTrace());
 
-/* clock chip */
+/* clock + freshness chips tick every second during live running */
 setInterval(() => {
   const c = $("#chipClock");
   if (S.mode === "live" && S.session) {
     c.style.display = "";
     c.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    renderHeader();
   } else c.style.display = "none";
 }, 1000);
+
+/* Keep the screen awake while watching live or demo running — an F1 stint is
+   much longer than any phone's screen timeout. Best-effort; silently absent
+   on browsers without the Wake Lock API. */
+let wakeLock = null;
+async function updateWakeLock() {
+  const want = (S.mode === "live" || S.mode === "demo") && document.visibilityState === "visible";
+  try {
+    if (want && !wakeLock && "wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      const wl = wakeLock; wakeLock = null;
+      await wl.release();
+    }
+  } catch { wakeLock = null; }
+}
+setInterval(updateWakeLock, 5000);
+
+/* Coming back to the tab mid-session: poll immediately instead of waiting
+   out the interval, and re-arm the wake lock (it auto-releases on hide). */
+document.addEventListener("visibilitychange", () => {
+  updateWakeLock();
+  if (document.visibilityState === "visible" && S.mode === "live") pollTick().catch(() => {});
+});
 
 /* boot */
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {

@@ -77,11 +77,14 @@ switches), and Claude reads it together with the pit and tyre data.
 
 ## Race-weekend drill (e.g. Spa)
 
-1. Open the app before FP1 — the **Latest** button lands on the upcoming session with a countdown.
-2. Leave it open; polling starts automatically and data flows as the session goes live
-   (paid token for true real-time, otherwise expect it right after the session).
-3. After any session: **Latest** → full replay with the race trace and intelligence feed.
-4. Dry-run beforehand: pick last week's Grand Prix from the pickers and hit play, or press **Demo**.
+1. Sign in to OpenF1 once (Settings ⚙︎) — the token then refreshes itself all weekend.
+2. Open the app before the session — the **Latest** button lands on the upcoming session
+   with a countdown. Leave it open: polling runs, the driver list and timing appear on
+   their own at lights out, and the screen stays awake while live (Wake Lock).
+3. Watch the header: **● updating** (green) means data is flowing; **⚠ stalled** means
+   the feed has gone quiet — check your connection or the OpenF1 status.
+4. After any session: **Latest** → full replay with the race trace and intelligence feed.
+5. Dry-run beforehand: pick last week's Grand Prix from the pickers and hit play, or press **Demo**.
 
 ## Development
 
