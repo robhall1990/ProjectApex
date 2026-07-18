@@ -50,10 +50,15 @@ fully offline).
 ## Live data: what's free and what isn't
 
 - **Completed sessions** (replay) are free on OpenF1 — no account needed.
-- **Real-time data during a session** requires a paid OpenF1 account
-  ([openf1.org](https://openf1.org) → get a token, paste it in Settings ⚙︎).
-  Without a token the app still works, but live-session requests may be rejected or delayed
-  until shortly after the session.
+- **Real-time data during a session** requires a paid OpenF1 account. Open Settings ⚙︎ and
+  **sign in with your OpenF1 email and password** — the app exchanges them for an access
+  token (via `api.openf1.org/token`, straight from your browser) and refreshes it
+  automatically as it nears expiry, so you sign in once and live timing just keeps flowing.
+  "Stay signed in" stores your credentials in this browser only; leave it unticked on a
+  shared machine. There's also an *Advanced: paste a token manually* option if you'd rather
+  manage the token yourself.
+- Without sign-in the app still works — replay and demo are fully available; live-session
+  requests are just rejected or delayed until shortly after the session.
 - Data typically appears on OpenF1 with a few seconds' delay vs. the TV feed.
 
 ## Claude insights

@@ -194,6 +194,11 @@
   .field label { display: block; font-size: 12px; color: var(--ink2); margin-bottom: 4px; }
   .field input, .field select { width: 100%; background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
   .field .hint { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .field .hint code { font-family: var(--mono); font-size: 11px; }
+  .of1-status { font-size: 12px; margin-bottom: 6px; display: none; }
+  .of1-status.in { display: block; color: #35c46f; }
+  .of1-status.out { display: block; color: var(--muted); }
+  .of1-status.err { display: block; color: #ff5c5c; }
   .row { display: flex; gap: 8px; align-items: center; }
 
   .empty { color: var(--muted); padding: 18px 4px; text-align: center; font-size: 13px; }
@@ -311,9 +316,23 @@
 <dialog id="settings">
   <h3>Settings</h3>
   <div class="field">
-    <label for="inOF1">OpenF1 API token (optional)</label>
-    <input id="inOF1" type="password" placeholder="Bearer token for real-time data" autocomplete="off">
-    <div class="hint">Free OpenF1 access covers completed sessions (and delayed data). Real-time timing needs a paid OpenF1 account — paste the token here. Stored only in this browser.</div>
+    <label>OpenF1 sign-in (for real-time data)</label>
+    <div id="of1Status" class="of1-status"></div>
+    <input id="inOF1User" type="text" placeholder="OpenF1 email / username" autocomplete="username">
+    <input id="inOF1Pass" type="password" placeholder="OpenF1 password" autocomplete="current-password" style="margin-top:6px">
+    <div class="field row" style="margin:6px 0 0">
+      <input type="checkbox" id="inOF1Stay" style="width:auto" checked>
+      <label for="inOF1Stay" style="margin:0">Stay signed in — auto-refreshes the token during a session</label>
+    </div>
+    <div class="row" style="gap:8px; margin-top:8px">
+      <button class="btn primary" id="btnOF1Login" type="button">Sign in</button>
+      <button class="btn" id="btnOF1Logout" type="button" style="display:none">Sign out</button>
+    </div>
+    <div class="hint">Free OpenF1 access covers completed sessions. Real-time timing needs a paid account. Sign-in calls <code>api.openf1.org/token</code> straight from your browser; the token refreshes itself as it nears expiry. “Stay signed in” stores your credentials in this browser only — don’t tick it on a shared machine.</div>
+    <details style="margin-top:8px">
+      <summary class="hint" style="cursor:pointer">Advanced: paste a token manually</summary>
+      <input id="inOF1" type="password" placeholder="Bearer token" autocomplete="off" style="margin-top:6px">
+    </details>
   </div>
   <div class="field">
     <label for="inAnthropic">Anthropic API key (optional — enables Claude insights)</label>
@@ -387,8 +406,6 @@ for (const k of ["of1Token", "anthropicKey", "model", "autoAI", "pollSec"]) {
   if (old != null && localStorage.getItem("apex." + k) == null) localStorage.setItem("apex." + k, old);
 }
 const cfg = {
-  get of1Token()      { return localStorage.getItem("apex.of1Token") || ""; },
-  set of1Token(v)     { localStorage.setItem("apex.of1Token", v); },
   get anthropicKey()  { return localStorage.getItem("apex.anthropicKey") || ""; },
   set anthropicKey(v) { localStorage.setItem("apex.anthropicKey", v); },
   get model()         { return localStorage.getItem("apex.model") || "claude-opus-4-8"; },
@@ -399,6 +416,50 @@ const cfg = {
   set pollSec(v)      { localStorage.setItem("apex.pollSec", String(v)); },
 };
 const API_BASE = new URLSearchParams(location.search).get("api") || "https://api.openf1.org/v1";
+const OF1_TOKEN_URL = new URL(API_BASE, location.href).origin + "/token";
+
+/* OpenF1 credential + bearer-token store. A manually-pasted token has exp=0
+   (never auto-expires); a signed-in token carries an expiry and refreshes
+   itself from stored credentials as it nears the end. */
+const of1 = {
+  get user()  { return localStorage.getItem("apex.of1User") || ""; },
+  set user(v) { v ? localStorage.setItem("apex.of1User", v) : localStorage.removeItem("apex.of1User"); },
+  get pass()  { return localStorage.getItem("apex.of1Pass") || ""; },
+  set pass(v) { v ? localStorage.setItem("apex.of1Pass", v) : localStorage.removeItem("apex.of1Pass"); },
+  get token() { return localStorage.getItem("apex.of1Token") || ""; },
+  set token(v){ v ? localStorage.setItem("apex.of1Token", v) : localStorage.removeItem("apex.of1Token"); },
+  get exp()   { return parseInt(localStorage.getItem("apex.of1Exp") || "0", 10); },
+  set exp(v)  { v ? localStorage.setItem("apex.of1Exp", String(v)) : localStorage.removeItem("apex.of1Exp"); },
+  signedIn()  { return !!this.token || (!!this.user && !!this.pass); },
+  signOut()   { this.user = ""; this.pass = ""; this.token = ""; this.exp = 0; },
+};
+
+/* Exchange username+password for an access token (OAuth2 password grant). */
+async function of1Login(user, pass) {
+  const res = await fetch(OF1_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username: user, password: pass }),
+  });
+  if (!res.ok) { const e = new Error("OpenF1 sign-in failed (" + res.status + ")"); e.status = res.status; throw e; }
+  const j = await res.json();
+  if (!j.access_token) throw new Error("OpenF1 returned no token");
+  of1.token = j.access_token;
+  of1.exp = j.expires_in ? Date.now() + j.expires_in * 1000 : 0;
+  return j.access_token;
+}
+
+/* Return a currently-valid bearer, refreshing from stored creds if needed.
+   Single-flight so a burst of parallel requests triggers only one refresh. */
+let of1Refreshing = null;
+async function of1Bearer() {
+  if (of1.token && (of1.exp === 0 || of1.exp - Date.now() > 60000)) return of1.token;   // still valid
+  if (of1.user && of1.pass) {
+    if (!of1Refreshing) of1Refreshing = of1Login(of1.user, of1.pass).catch(() => "").finally(() => { of1Refreshing = null; });
+    return of1Refreshing;
+  }
+  return of1.token;   // expired/absent and nothing to refresh with — send what we have
+}
 
 /* ============================== state ============================== */
 const S = {
@@ -466,7 +527,8 @@ async function of(path, params = {}) {
   const url = new URL(API_BASE + path);
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) url.searchParams.set(k, v);
   const headers = {};
-  if (cfg.of1Token) headers["Authorization"] = "Bearer " + cfg.of1Token;
+  const tok = await of1Bearer();
+  if (tok) headers["Authorization"] = "Bearer " + tok;
   const res = await fetch(url, { headers });
   if (!res.ok) { const e = new Error("OpenF1 " + res.status); e.status = res.status; throw e; }
   return res.json();
@@ -1662,7 +1724,7 @@ async function loadSession(sessionKey) {
 function banner(html) { const b = $("#banner"); if (html) { b.innerHTML = html; b.style.display = "block"; } else b.style.display = "none"; }
 function apiTrouble(e) {
   if (e && (e.status === 401 || e.status === 403)) {
-    banner(`🔐 OpenF1 rejected the request (${e.status}). Real-time data during a live session needs a paid OpenF1 account token (Settings ⚙︎). Completed sessions are free — try Replay after the session, or Demo mode now.`);
+    banner(`🔐 OpenF1 rejected the request (${e.status}). Real-time data during a live session needs a paid OpenF1 account — sign in under Settings ⚙︎. Completed sessions are free — try Replay after the session, or Demo mode now.`);
   } else if (e && e.status === 429) {
     banner("🐢 OpenF1 rate limit hit — polling slowed down automatically.");
   } else {
@@ -1938,17 +2000,65 @@ $("#btnLatest").addEventListener("click", loadLatest);
 $("#btnDemo").addEventListener("click", startDemo);
 $("#btnAsk").addEventListener("click", () => askClaude(false));
 
+function renderOF1Status() {
+  const el = $("#of1Status");
+  if (of1.user && of1.pass) {
+    el.className = "of1-status in";
+    el.textContent = `✓ Signed in as ${of1.user} — token refreshes automatically.`;
+    $("#btnOF1Logout").style.display = "";
+  } else if (of1.token) {
+    el.className = "of1-status in";
+    el.textContent = of1.exp ? "✓ Signed in — token valid for this session." : "✓ Using a manually-entered token.";
+    $("#btnOF1Logout").style.display = "";
+  } else {
+    el.className = "of1-status out";
+    el.textContent = "Not signed in — completed sessions still work; live timing needs sign-in.";
+    $("#btnOF1Logout").style.display = "none";
+  }
+}
+
 $("#btnSettings").addEventListener("click", () => {
-  $("#inOF1").value = cfg.of1Token;
+  $("#inOF1User").value = of1.user;
+  $("#inOF1Pass").value = of1.pass;
+  $("#inOF1").value = of1.exp ? "" : of1.token;   // only surface a manually-pasted (non-expiring) token
+  $("#inOF1Stay").checked = !!(of1.user && of1.pass) || !of1.token;
   $("#inAnthropic").value = cfg.anthropicKey;
   $("#inModel").value = cfg.model;
   $("#inAutoAI").checked = cfg.autoAI;
   $("#inPoll").value = cfg.pollSec;
+  renderOF1Status();
   $("#settings").showModal();
 });
 $("#btnCloseSettings").addEventListener("click", () => $("#settings").close());
+
+$("#btnOF1Login").addEventListener("click", async () => {
+  const user = $("#inOF1User").value.trim(), pass = $("#inOF1Pass").value;
+  if (!user || !pass) { toast("Enter your OpenF1 email and password"); return; }
+  const btn = $("#btnOF1Login"); btn.disabled = true; btn.textContent = "Signing in…";
+  try {
+    await of1Login(user, pass);
+    if ($("#inOF1Stay").checked) { of1.user = user; of1.pass = pass; }
+    else { of1.user = ""; of1.pass = ""; }   // token kept for this session, creds not persisted
+    renderOF1Status();
+    toast("Signed in to OpenF1 ✓");
+    if (S.mode === "idle" || !S.session) loadLatest().catch(() => {});
+  } catch (e) {
+    $("#of1Status").className = "of1-status err";
+    $("#of1Status").textContent = e.status === 401 ? "✗ Wrong email or password." : "✗ " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "Sign in";
+  }
+});
+$("#btnOF1Logout").addEventListener("click", () => {
+  of1.signOut();
+  $("#inOF1User").value = ""; $("#inOF1Pass").value = ""; $("#inOF1").value = "";
+  renderOF1Status();
+  toast("Signed out of OpenF1");
+});
+
 $("#btnSaveSettings").addEventListener("click", () => {
-  cfg.of1Token = $("#inOF1").value.trim();
+  const manual = $("#inOF1").value.trim();   // advanced manual-token field
+  if (manual && manual !== of1.token) { of1.token = manual; of1.exp = 0; }
   cfg.anthropicKey = $("#inAnthropic").value.trim();
   cfg.model = $("#inModel").value;
   cfg.autoAI = $("#inAutoAI").checked;
