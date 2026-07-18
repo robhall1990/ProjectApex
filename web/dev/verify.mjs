@@ -51,6 +51,7 @@ try {
   // a canned SSE stream — CI exercises the real streaming render path, no key needed.
   await page.addInitScript(() => {
     localStorage.setItem("apex.anthropicKey", "sk-test-not-real");
+    localStorage.setItem("apex.pollSec", "3");   // fast polls so the live-mode section stays quick
     if (!localStorage.getItem("apex.model")) localStorage.setItem("velocity.model", "claude-test-model");
   });
   const sse = [
@@ -174,6 +175,22 @@ try {
   const qBrief = await page.evaluate(() => buildBrief());
   check("quali: brief carries segment + cutoff", qBrief.includes("Qualifying segment") && qBrief.includes("OUT"));
   await page.screenshot({ path: `${SHOT}/quali.png`, fullPage: true });
+
+  /* ---- 1c. live mode: late driver list, streaming data, freshness chip ----
+     The mock withholds /drivers for ~5s after first touch, exactly like OpenF1
+     does before a session goes live — the board must fill in on its own. */
+  await page.goto(`${BASE}/index.html?api=${BASE}/v1&session=77004`);
+  await page.waitForTimeout(2000);
+  check("live: mode chip = LIVE", (await page.textContent("#chipMode")).trim() === "LIVE");
+  check("live: board empty before drivers publish", await page.locator("#board tbody tr").count() === 0);
+  check("live: freshness chip visible", await page.isVisible("#chipSync"));
+  await page.waitForTimeout(10000);
+  const liveCount = await page.locator("#board tbody tr").count();
+  check("live: board fills once drivers publish", liveCount === 6, `${liveCount} rows`);
+  const liveP2 = liveCount >= 2 ? await page.locator("#board tbody tr").nth(1).innerText() : "";
+  check("live: gaps populated", /\+\d/.test(liveP2), liveP2.replace(/\s+/g, " "));
+  check("live: freshness chip green", ((await page.textContent("#chipSync")) || "").includes("updating"));
+  await page.screenshot({ path: `${SHOT}/live.png`, fullPage: true });
 
   /* ---- 2. demo mode (full synthetic pipeline) ---- */
   await page.click("#btnDemo");

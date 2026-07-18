@@ -37,6 +37,43 @@ const GRID = [
 
 const DB = { drivers: [], intervals: [], position: [], laps: [], stints: [], pit: [], race_control: [], weather: [], team_radio: [] };
 
+/* ---------- live session (77004): data streams in against real time ----------
+   The driver list is withheld until a few seconds after the session is first
+   requested — mirroring how OpenF1 publishes /drivers only once a session goes
+   live — so the app's late-driver recovery path gets exercised end-to-end. */
+const LIVE = { key: 77004, t0: Date.now() - 30000, firstTouch: null };
+SESSIONS.push({ session_key: LIVE.key, session_name: "Race (live mock)", session_type: "Race", meeting_key: 9001, year: 2026, country_name: "Mockland", circuit_short_name: "Mockshire", date_start: new Date(LIVE.t0).toISOString(), date_end: new Date(LIVE.t0 + 7200000).toISOString() });
+
+function liveRows(resource) {
+  LIVE.firstTouch ??= Date.now();
+  const revealed = Date.now() - LIVE.firstTouch > 5000;
+  const out = { drivers: [], intervals: [], position: [], laps: [], stints: [], pit: [], race_control: [], weather: [], team_radio: [] };
+  if (revealed) for (const [n, tla, name, team, colour] of GRID) {
+    out.drivers.push({ driver_number: n, name_acronym: tla, full_name: name, broadcast_name: name, team_name: team, team_colour: colour, session_key: LIVE.key });
+    out.stints.push({ driver_number: n, stint_number: 1, compound: "SOFT", lap_start: 1, tyre_age_at_start: 0, session_key: LIVE.key });
+  }
+  const isoL = s => new Date(LIVE.t0 + s * 1000).toISOString();
+  const elapsed = Math.floor((Date.now() - LIVE.t0) / 1000);
+  const cars = GRID.map(([n, , , , , base], i) => ({ n, base, dist: -i * 0.004, lap: 0, lastCross: 0 }));
+  for (let t = 0; t <= elapsed; t += 5) {
+    for (const c of cars) {
+      c.dist += 5 / c.base;
+      const lapNow = Math.floor(c.dist) + 1;
+      if (lapNow > c.lap && c.dist > 0) {
+        if (c.lap >= 1) out.laps.push({ driver_number: c.n, lap_number: c.lap, lap_duration: +(t - c.lastCross).toFixed(3), date_start: isoL(t), session_key: LIVE.key });
+        c.lastCross = t; c.lap = lapNow;
+      }
+    }
+    const order = [...cars].sort((a, b) => b.dist - a.dist);
+    order.forEach((c, i) => {
+      out.position.push({ driver_number: c.n, position: i + 1, date: isoL(t), session_key: LIVE.key });
+      out.intervals.push({ driver_number: c.n, gap_to_leader: i ? +(((order[0].dist - c.dist) * c.base).toFixed(3)) : 0, interval: i ? +(((order[i - 1].dist - c.dist) * c.base).toFixed(3)) : 0, date: isoL(t), session_key: LIVE.key });
+    });
+  }
+  out.weather.push({ date: isoL(Math.max(0, elapsed - 5)), air_temperature: 22, track_temperature: 35, rainfall: 0, session_key: LIVE.key });
+  return out[resource] || [];
+}
+
 /* Tiny synthesized WAV (0.7s two-tone beep) served at /audio/radio.wav so the
    app's team-radio play buttons are exercisable offline. */
 function makeBeepWav() {
@@ -168,8 +205,11 @@ http.createServer((req, res) => {
     let rows;
     if (resource === "meetings") rows = filterRows([MEETING], url.searchParams);
     else if (resource === "sessions") {
-      rows = url.searchParams.get("session_key") === "latest" ? [SESSIONS[SESSIONS.length - 1]] : filterRows(SESSIONS, url.searchParams);
-    } else if (resource in DB) rows = filterRows(DB[resource], url.searchParams);
+      rows = url.searchParams.get("session_key") === "latest"
+        ? [SESSIONS.find(s => s.session_key === 77002)]
+        : filterRows(SESSIONS, url.searchParams);
+    } else if (url.searchParams.get("session_key") === String(LIVE.key)) rows = filterRows(liveRows(resource), url.searchParams);
+    else if (resource in DB) rows = filterRows(DB[resource], url.searchParams);
     else { res.writeHead(404); return res.end("[]"); }
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify(rows));
