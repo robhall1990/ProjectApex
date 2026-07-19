@@ -69,6 +69,10 @@
     border: 1px solid rgba(245,185,66,0.5); background: rgba(245,185,66,0.1); color: var(--ink);
     font-size: 13px;
   }
+  .banner-act {
+    margin-left: 8px; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 700; font-size: 12px;
+  }
   .grid { display: grid; grid-template-columns: minmax(360px, 480px) 1fr; gap: 14px; align-items: start; }
   .grid > * { min-width: 0; }
   @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
@@ -1798,9 +1802,14 @@ async function loadLatest() {
       await loadSessionList(s.meeting_key);
       $("#selSession").value = s.session_key;
       await loadSession(s.session_key);
-      return;
+      return true;
     }
-  } catch (e) { apiTrouble(e); }
+  } catch (e) {
+    // REST discovery blocked (live-session CORS lockdown): go straight to push
+    if (cfg.useMqtt && cfg.mqttUrl && of1.signedIn()) { goLivePush(); return true; }
+    apiTrouble(e);
+  }
+  return false;
 }
 
 async function loadSession(sessionKey) {
@@ -1838,17 +1847,28 @@ async function loadSession(sessionKey) {
 }
 
 function banner(html) { const b = $("#banner"); if (html) { b.innerHTML = html; b.style.display = "block"; } else b.style.display = "none"; }
+
+// during a live session REST is CORS-blocked, but MQTT push isn't — offer it
+const pushOffer = () => (cfg.useMqtt && cfg.mqttUrl && of1.signedIn())
+  ? ' <button class="banner-act" data-act="push">▶ Go live via push</button>' : "";
+
 function apiTrouble(e) {
   if (e && (e.status === 401 || e.status === 403)) {
-    banner(of1.signedIn()
-      ? `🔐 OpenF1 rejected the request (${e.status}) even though you're signed in. If you have a paid subscription, make sure it's on this same OpenF1 account — and try Settings ⚙︎ → <b>Test connection</b> to see exactly what the API says. If your subscription came with an API key, paste it under Advanced.`
-      : `🔐 OpenF1 rejected the request (${e.status}). Real-time data during a live session needs a paid OpenF1 account — sign in under Settings ⚙︎. Completed sessions are free — try Replay after the session, or Demo mode now.`);
+    banner((of1.signedIn()
+      ? `🔐 OpenF1 rejected the request (${e.status}) even though you're signed in. During a live session the REST API is blocked in browsers (CORS) — real-time timing comes over MQTT push instead.`
+      : `🔐 OpenF1 rejected the request (${e.status}). Real-time data during a live session needs a paid OpenF1 account — sign in under Settings ⚙︎. Completed sessions are free — try Replay after the session, or Demo mode now.`) + pushOffer());
   } else if (e && e.status === 429) {
     banner("🐢 OpenF1 rate limit hit — polling slowed down automatically.");
   } else {
-    banner("📡 Can’t reach the OpenF1 API. Check your connection (or an ad-blocker), or hit <b>Demo</b> to explore the app with synthetic data.");
+    banner("📡 Can’t reach the OpenF1 REST API (normal during a live session — it’s CORS-blocked in browsers). Use real-time push for live timing, or hit <b>Demo</b>." + pushOffer());
   }
 }
+
+// banner action buttons (e.g. "Go live via push")
+$("#banner").addEventListener("click", e => {
+  const b = e.target.closest(".banner-act");
+  if (b && b.dataset.act === "push") goLivePush();
+});
 
 /* ---------- live: MQTT push preferred, REST polling as fallback ---------- */
 function startLive() {
@@ -1869,21 +1889,25 @@ function startPolling() {
 const MQTT_ENDPOINTS = new Set(["drivers", "intervals", "position", "laps", "pit", "stints", "race_control", "weather", "team_radio"]);
 // OpenF1 topics mirror the REST paths (v1/<endpoint>); "<ep>/#" also matches the
 // bare "v1/<ep>" per the MQTT spec, so it covers both flat and sub-topic publishing.
-const MQTT_TOPICS = [...MQTT_ENDPOINTS].map(e => `v1/${e}/#`);
+// v1/sessions is included so a push-only start can learn the live session itself.
+const MQTT_TOPICS = [...MQTT_ENDPOINTS].map(e => `v1/${e}/#`).concat(["v1/sessions/#"]);
 
-async function startLiveMqtt() {
+/* Start live over MQTT. opts.direct = push-only: REST session discovery was
+   blocked (live-session CORS lockdown), so there's no session context yet — we
+   subscribe straight to the live stream and learn the session from v1/sessions;
+   MQTT failure surfaces as a banner rather than falling back to blocked REST. */
+async function startLiveMqtt(opts = {}) {
   const ep = S.epoch;
   let tok = "";
   try { tok = await of1Bearer(); } catch {}
   if (ep !== S.epoch) return;
-  if (!tok) { startPolling(); return; }
+  if (!tok) { if (!opts.direct) startPolling(); else banner("🔐 Sign in to OpenF1 (Settings ⚙︎) to use real-time push."); return; }
 
   S.transport = "mqtt";
   S.mqttBuf = {};
   const flush = () => {
     if (ep !== S.epoch || !S.mqttBuf) return;
-    const keys = Object.keys(S.mqttBuf);
-    if (!keys.length) return;
+    if (!Object.keys(S.mqttBuf).length) return;
     const buf = S.mqttBuf; S.mqttBuf = {};
     ingest(buf); render();
     S.lastDataAt = Date.now(); banner(null);
@@ -1893,25 +1917,59 @@ async function startLiveMqtt() {
   S.mqtt = createMqttClient({
     url: cfg.mqttUrl,
     username: of1.user || "apex", password: tok,   // OpenF1: token is the MQTT password
-    onConnect: () => { if (ep === S.epoch) S.mqtt.subscribe(MQTT_TOPICS); },
+    onConnect: () => { if (ep === S.epoch) { S.mqtt.subscribe(MQTT_TOPICS); if (opts.direct) banner("📡 Real-time push connected — waiting for the next timing update…"); } },
     onMessage: (topic, payload) => {
+      let obj; try { obj = JSON.parse(payload); } catch { return; }
+      if (topic.includes("/sessions")) {                 // learn the live session from the stream
+        const s = Array.isArray(obj) ? obj[0] : obj;
+        if (s && (s.session_name || s.session_key)) {
+          S.session = Object.assign(S.session || {}, s);
+          S.isRace = s.session_type === "Race" || /Race|Sprint/i.test(s.session_name || "");
+          renderHeader();
+        }
+        return;
+      }
       const seg = topic.split("/").find(s => MQTT_ENDPOINTS.has(s));
       if (!seg) return;
-      let obj; try { obj = JSON.parse(payload); } catch { return; }
       (S.mqttBuf[seg] ||= []).push(...(Array.isArray(obj) ? obj : [obj]));
     },
-    onError: () => fallbackToPolling(ep),
-    onClose: () => fallbackToPolling(ep),
+    onError: () => onMqttDrop(ep, opts.direct),
+    onClose: () => onMqttDrop(ep, opts.direct),
   });
 
-  // if push produces nothing within 10s, quietly add polling alongside
-  S.mqttWatchdog = setTimeout(() => { if (ep === S.epoch && !S.lastDataAt) fallbackToPolling(ep); }, 10000);
+  S.mqttWatchdog = setTimeout(() => {
+    if (ep === S.epoch && !S.lastDataAt)
+      opts.direct ? banner("📡 Push connected but no data yet. If the session hasn’t started, it’ll begin streaming at lights out — leave this open.") : fallbackToPolling(ep);
+  }, 12000);
+}
+
+function onMqttDrop(ep, direct) {
+  if (ep !== S.epoch || S.mode !== "live") return;
+  if (direct) { stopMqtt(); banner('📡 Real-time push disconnected. <button class="banner-act" data-act="push">Reconnect</button>'); }
+  else fallbackToPolling(ep);
 }
 
 function fallbackToPolling(ep) {
   if (ep !== S.epoch || S.mode !== "live") return;
   stopMqtt();
   startPolling();
+}
+
+/* Push-only live: used when REST session discovery is CORS-blocked mid-session.
+   No session_key needed — the live broker only streams the current session. */
+function goLivePush() {
+  if (!(cfg.useMqtt && cfg.mqttUrl && of1.signedIn())) {
+    toast("Sign in to OpenF1 and enable real-time push first");
+    $("#settings").showModal();
+    return;
+  }
+  stopEngines(); resetData();
+  S.session = { session_name: "Live session", session_type: "Race", circuit_short_name: "", country_name: "", year: new Date().getFullYear(), session_key: null };
+  S.isRace = true;
+  S.mode = "live";
+  render();
+  banner("📡 Connecting to OpenF1 real-time push…");
+  startLiveMqtt({ direct: true });
 }
 
 function stopMqtt() {

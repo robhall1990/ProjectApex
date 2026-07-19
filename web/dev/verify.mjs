@@ -208,6 +208,12 @@ try {
   check("mqtt: no REST poll fallback used", await page.evaluate(() => S.pollTimer === null));
   await page.screenshot({ path: `${SHOT}/mqtt.png`, fullPage: true });
 
+  /* push-only start: no session key, learn the session from v1/sessions and stream */
+  await page.evaluate(() => goLivePush());
+  await page.waitForTimeout(5000);
+  check("mqtt: push-only start fills board", await page.locator("#board tbody tr").count() === 6);
+  check("mqtt: session learned from stream", /Race/.test(await page.textContent("#boardTitle")), await page.textContent("#boardTitle"));
+
   /* ---- 2. demo mode (full synthetic pipeline) ---- */
   await page.click("#btnDemo");
   await page.waitForTimeout(20000);
