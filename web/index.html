@@ -346,8 +346,8 @@
       <input type="checkbox" id="inMqttOn" style="width:auto" checked>
       <label for="inMqttOn" style="margin:0">Use real-time push when signed in (falls back to polling)</label>
     </div>
-    <input id="inMqttUrl" type="text" placeholder="wss://…  OpenF1 real-time broker URL" autocomplete="off">
-    <div class="hint">During a live session OpenF1's REST API is blocked in browsers (CORS); its MQTT push channel isn't. Paste the WebSocket broker URL from OpenF1's real-time docs and sign in above — timing then streams straight in. Leave blank to always poll (works for replay and after the session).</div>
+    <input id="inMqttUrl" type="text" placeholder="wss://mqtt.openf1.org:8084/mqtt" autocomplete="off">
+    <div class="hint">During a live session OpenF1's REST API is blocked in browsers (CORS); its MQTT push channel isn't. This is pre-filled with OpenF1's broker (<code>wss://mqtt.openf1.org:8084/mqtt</code>) — just sign in above and timing streams straight in. Uncheck to always poll (fine for replay and after the session).</div>
   </div>
   <div class="field">
     <label for="inAnthropic">Anthropic API key (optional — enables Claude insights)</label>
@@ -431,9 +431,10 @@ const cfg = {
   set pollSec(v)      { localStorage.setItem("apex.pollSec", String(v)); },
   get useMqtt()       { return localStorage.getItem("apex.useMqtt") !== "0"; },   // default on
   set useMqtt(v)      { localStorage.setItem("apex.useMqtt", v ? "1" : "0"); },
-  get mqttUrl()       { return new URLSearchParams(location.search).get("mqtt") || localStorage.getItem("apex.mqttUrl") || ""; },
-  set mqttUrl(v)      { v ? localStorage.setItem("apex.mqttUrl", v) : localStorage.removeItem("apex.mqttUrl"); },
+  get mqttUrl()       { return new URLSearchParams(location.search).get("mqtt") || localStorage.getItem("apex.mqttUrl") || DEFAULT_MQTT_URL; },
+  set mqttUrl(v)      { (v && v !== DEFAULT_MQTT_URL) ? localStorage.setItem("apex.mqttUrl", v) : localStorage.removeItem("apex.mqttUrl"); },
 };
+const DEFAULT_MQTT_URL = "wss://mqtt.openf1.org:8084/mqtt";   // OpenF1's real-time broker (MQTT over WSS)
 const API_BASE = new URLSearchParams(location.search).get("api") || "https://api.openf1.org/v1";
 const OF1_TOKEN_URL = new URL(API_BASE, location.href).origin + "/token";
 
@@ -1866,6 +1867,9 @@ function startPolling() {
 }
 
 const MQTT_ENDPOINTS = new Set(["drivers", "intervals", "position", "laps", "pit", "stints", "race_control", "weather", "team_radio"]);
+// OpenF1 topics mirror the REST paths (v1/<endpoint>); "<ep>/#" also matches the
+// bare "v1/<ep>" per the MQTT spec, so it covers both flat and sub-topic publishing.
+const MQTT_TOPICS = [...MQTT_ENDPOINTS].map(e => `v1/${e}/#`);
 
 async function startLiveMqtt() {
   const ep = S.epoch;
@@ -1888,8 +1892,8 @@ async function startLiveMqtt() {
 
   S.mqtt = createMqttClient({
     url: cfg.mqttUrl,
-    username: tok, password: "",
-    onConnect: () => { if (ep === S.epoch) S.mqtt.subscribe(["#"]); },
+    username: of1.user || "apex", password: tok,   // OpenF1: token is the MQTT password
+    onConnect: () => { if (ep === S.epoch) S.mqtt.subscribe(MQTT_TOPICS); },
     onMessage: (topic, payload) => {
       const seg = topic.split("/").find(s => MQTT_ENDPOINTS.has(s));
       if (!seg) return;
@@ -2210,7 +2214,7 @@ $("#btnSettings").addEventListener("click", () => {
   $("#inOF1").value = of1.exp ? "" : of1.token;   // only surface a manually-pasted (non-expiring) token
   $("#inOF1Stay").checked = !!(of1.user && of1.pass) || !of1.token;
   $("#inMqttOn").checked = cfg.useMqtt;
-  $("#inMqttUrl").value = localStorage.getItem("apex.mqttUrl") || "";
+  $("#inMqttUrl").value = localStorage.getItem("apex.mqttUrl") || DEFAULT_MQTT_URL;
   $("#inAnthropic").value = cfg.anthropicKey;
   $("#inModel").value = cfg.model;
   $("#inAutoAI").checked = cfg.autoAI;
@@ -2295,8 +2299,8 @@ $("#btnOF1Test").addEventListener("click", async () => {
       let done = false;
       const finish = m => { if (!done) { done = true; try { c.close(); } catch {} resolve(m); } };
       const c = createMqttClient({
-        url: mqttUrl, username: tok || "anon", password: "",
-        onConnect: () => c.subscribe(["#"]),
+        url: mqttUrl, username: of1.user || "apex", password: tok,
+        onConnect: () => c.subscribe(MQTT_TOPICS),
         onMessage: (topic) => finish(`✓ connected & receiving — first topic: ${topic}`),
         onError: e => finish("✗ " + e.message),
         onClose: () => finish("✗ connection closed before any data"),

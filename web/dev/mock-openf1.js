@@ -307,8 +307,13 @@ server.on("upgrade", (req, socket) => {
       if (frame.op === 0x8) { socket.end(); return; }        // WS close
       const p = frame.payload; if (!p.length) continue;
       const type = p[0] >> 4;
-      if (type === 1) {                                       // CONNECT -> CONNACK accepted
-        sendMqtt([0x20, 0x02, 0x00, 0x00]);
+      if (type === 1) {                                       // CONNECT
+        const [, vh] = mqttRemLen(p, 1);                      // connect flags live at varHeader+7
+        const flags = p[vh + 7];
+        // OpenF1 auth: token is the password. Reject if the password flag (0x40)
+        // is unset, so a client that puts the token in the wrong field is caught.
+        if (!(flags & 0x40)) { sendMqtt([0x20, 0x02, 0x00, 0x04]); return; }   // CONNACK bad credentials
+        sendMqtt([0x20, 0x02, 0x00, 0x00]);                   // CONNACK accepted
       } else if (type === 8) {                                // SUBSCRIBE -> SUBACK, then stream
         const [, i] = mqttRemLen(p, 1);
         sendMqtt([0x90, 0x03, p[i], p[i + 1], 0x00]);
