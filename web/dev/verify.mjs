@@ -236,6 +236,15 @@ try {
     return seen;
   });
   check("signin: bearer sent on OpenF1 calls", (auth || "").startsWith("Bearer mock-token-"), auth || "(none)");
+  // connection tester: three probes, all against the mock
+  await page.click("#btnOF1Test");
+  await page.waitForTimeout(800);
+  const testOut = await page.textContent("#of1TestOut");
+  check("signin: connection test runs all probes",
+    testOut.includes("1· data, no auth") && testOut.includes("access_token ✓") && testOut.includes("3· data, with bearer"),
+    testOut.split("\n")[1]);
+  check("signin: probes reach the API", (testOut.match(/HTTP 200/g) || []).length >= 3);
+
   // sign out clears everything (dialog is still open from the sign-in above)
   await page.click("#btnOF1Logout");
   await page.waitForTimeout(200);
