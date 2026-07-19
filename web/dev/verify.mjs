@@ -192,6 +192,22 @@ try {
   check("live: freshness chip green", ((await page.textContent("#chipSync")) || "").includes("updating"));
   await page.screenshot({ path: `${SHOT}/live.png`, fullPage: true });
 
+  /* ---- 1d. live via MQTT push: the CORS-proof real-time channel ----
+     Point the app at the mock broker with ?mqtt= and a pre-seeded token; the
+     board must fill from streamed PUBLISH messages, no REST polling involved. */
+  await page.addInitScript(() => localStorage.setItem("apex.of1Token", "mqtt-test-token"));
+  await page.goto(`${BASE}/index.html?api=${BASE}/v1&session=77004&mqtt=${encodeURIComponent(BASE.replace("http", "ws") + "/mqtt")}`);
+  await page.waitForTimeout(1500);
+  check("mqtt: transport is push", await page.evaluate(() => S.transport) === "mqtt");
+  await page.waitForTimeout(6000);
+  const mqttRows = await page.locator("#board tbody tr").count();
+  check("mqtt: board fills from pushed data", mqttRows === 6, `${mqttRows} rows`);
+  const mqttP2 = mqttRows >= 2 ? await page.locator("#board tbody tr").nth(1).innerText() : "";
+  check("mqtt: gaps arrive via push", /\+\d/.test(mqttP2), mqttP2.replace(/\s+/g, " "));
+  check("mqtt: freshness chip shows live push", ((await page.textContent("#chipSync")) || "").includes("push"));
+  check("mqtt: no REST poll fallback used", await page.evaluate(() => S.pollTimer === null));
+  await page.screenshot({ path: `${SHOT}/mqtt.png`, fullPage: true });
+
   /* ---- 2. demo mode (full synthetic pipeline) ---- */
   await page.click("#btnDemo");
   await page.waitForTimeout(20000);

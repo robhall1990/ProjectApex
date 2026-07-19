@@ -12,9 +12,9 @@ thing today: real F1 timing (gaps, intervals, tyres, pits) from the
 [OpenF1 API](https://openf1.org), a gap ladder, the classic race trace, live weather,
 playable team-radio clips, a live strategy model (tyre degradation, pit windows,
 undercut reads), qualifying mode with drop-zone cutoffs, head-to-head driver
-comparison, an automatic race-intelligence feed, click-to-follow driver highlighting,
-replay of any session back to 2023, PWA install on Android, and optional
-Claude-powered strategy insights. One HTML file — open it on Windows, Android, anything with a browser.
+comparison, real-time push over MQTT (the CORS-proof live channel), an automatic
+race-intelligence feed, click-to-follow driver highlighting, replay of any session
+back to 2023, PWA install on Android, and optional Claude-powered strategy insights. One HTML file — open it on Windows, Android, anything with a browser.
 See [`web/README.md`](web/README.md).
 
 The Android app below is the longer-term native client; the web MVP is how you watch

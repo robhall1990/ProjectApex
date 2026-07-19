@@ -181,7 +181,7 @@ function filterRows(rows, params) {
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png" };
 
-http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   res.setHeader("Access-Control-Allow-Origin", "*");
 
@@ -228,4 +228,101 @@ http.createServer((req, res) => {
   }
   res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream" });
   fs.createReadStream(file).pipe(res);
-}).listen(PORT, () => console.log(`mock OpenF1 + static server on http://localhost:${PORT}`));
+});
+
+/* ---------- mock MQTT-over-WebSocket broker ----------
+   A dependency-free stand-in for OpenF1's real-time push: completes the RFC6455
+   WebSocket handshake, speaks just enough MQTT 3.1.1 to accept a subscriber, and
+   then streams timing PUBLISH messages so the browser client + ingest path are
+   exercisable offline. Topics mirror the REST endpoints: v1/<endpoint>/<n>. */
+const crypto = require("crypto");
+
+function wsFrame(payloadBuf) {                    // server->client binary frame, unmasked
+  const len = payloadBuf.length;
+  let header;
+  if (len < 126) header = Buffer.from([0x82, len]);
+  else if (len < 65536) header = Buffer.from([0x82, 126, (len >> 8) & 0xff, len & 0xff]);
+  else header = Buffer.from([0x82, 127, 0, 0, 0, 0, (len >>> 24) & 0xff, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff]);
+  return Buffer.concat([header, payloadBuf]);
+}
+function wsDecode(buf) {                          // client->server, one frame; returns {payload, rest} or null
+  if (buf.length < 2) return null;
+  const len0 = buf[1] & 0x7f; let off = 2, len = len0;
+  if (len0 === 126) { len = buf.readUInt16BE(2); off = 4; }
+  else if (len0 === 127) { len = Number(buf.readBigUInt64BE(2)); off = 10; }
+  const masked = buf[1] & 0x80;
+  const mask = masked ? buf.slice(off, off + 4) : null; if (masked) off += 4;
+  if (buf.length < off + len) return null;
+  const payload = Buffer.from(buf.slice(off, off + len));
+  if (masked) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+  return { op: buf[0] & 0x0f, payload, rest: buf.slice(off + len) };
+}
+const mqttRemLen = (buf, i) => { let m = 1, v = 0, b; do { b = buf[i++]; v += (b & 0x7f) * m; m *= 128; } while (b & 0x80); return [v, i]; };
+const mqttLenBytes = n => { const o = []; do { let d = n % 128; n = Math.floor(n / 128); if (n > 0) d |= 0x80; o.push(d); } while (n > 0); return o; };
+
+server.on("upgrade", (req, socket) => {
+  const key = req.headers["sec-websocket-key"];
+  if (!key) { socket.destroy(); return; }
+  const accept = crypto.createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+    `Sec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Protocol: mqtt\r\n\r\n`
+  );
+
+  let buf = Buffer.alloc(0), pubTimer = null, t = 0;
+  const cars = GRID.map(([n, , , , , base], i) => ({ n, base, dist: -i * 0.004, lap: 0, lastCross: 0 }));
+  const sendMqtt = bytes => socket.write(wsFrame(Buffer.from(bytes)));
+  const publish = (topic, obj) => {
+    const tb = Buffer.from(topic), pb = Buffer.from(JSON.stringify(obj));
+    const body = [(tb.length >> 8) & 0xff, tb.length & 0xff, ...tb, ...pb];
+    sendMqtt([0x30, ...mqttLenBytes(body.length), ...body]);   // PUBLISH, QoS 0
+  };
+
+  function startPublishing() {
+    if (pubTimer) return;
+    pubTimer = setInterval(() => {
+      t += 5;
+      for (const c of cars) {
+        c.dist += 5 / c.base;
+        const lapNow = Math.floor(c.dist) + 1;
+        if (lapNow > c.lap && c.dist > 0) {
+          if (c.lap >= 1) publish(`v1/laps/${c.n}`, { driver_number: c.n, lap_number: c.lap, lap_duration: +(t - c.lastCross).toFixed(3), date_start: new Date().toISOString(), session_key: LIVE.key });
+          c.lastCross = t; c.lap = lapNow;
+        }
+      }
+      const order = [...cars].sort((a, b) => b.dist - a.dist);
+      order.forEach((c, i) => {
+        publish(`v1/position/${c.n}`, { driver_number: c.n, position: i + 1, date: new Date().toISOString(), session_key: LIVE.key });
+        publish(`v1/intervals/${c.n}`, { driver_number: c.n, gap_to_leader: i ? +(((order[0].dist - c.dist) * c.base).toFixed(3)) : 0, interval: i ? +(((order[i - 1].dist - c.dist) * c.base).toFixed(3)) : 0, date: new Date().toISOString(), session_key: LIVE.key });
+      });
+    }, 500);
+    socket.on("close", () => clearInterval(pubTimer));
+  }
+
+  socket.on("data", chunk => {
+    buf = Buffer.concat([buf, chunk]);
+    let frame;
+    while ((frame = wsDecode(buf))) {
+      buf = frame.rest;
+      if (frame.op === 0x8) { socket.end(); return; }        // WS close
+      const p = frame.payload; if (!p.length) continue;
+      const type = p[0] >> 4;
+      if (type === 1) {                                       // CONNECT -> CONNACK accepted
+        sendMqtt([0x20, 0x02, 0x00, 0x00]);
+      } else if (type === 8) {                                // SUBSCRIBE -> SUBACK, then stream
+        const [, i] = mqttRemLen(p, 1);
+        sendMqtt([0x90, 0x03, p[i], p[i + 1], 0x00]);
+        // publish the driver + stint snapshot once the subscriber is live
+        for (const [n, tla, name, team, colour] of GRID) {
+          publish(`v1/drivers/${n}`, { driver_number: n, name_acronym: tla, full_name: name, team_name: team, team_colour: colour, session_key: LIVE.key });
+          publish(`v1/stints/${n}`, { driver_number: n, stint_number: 1, compound: "SOFT", lap_start: 1, tyre_age_at_start: 0, session_key: LIVE.key });
+        }
+        startPublishing();
+      } else if (type === 12) sendMqtt([0xd0, 0x00]);         // PINGREQ -> PINGRESP
+      else if (type === 14) { socket.end(); return; }         // DISCONNECT
+    }
+  });
+  socket.on("error", () => {});
+});
+
+server.listen(PORT, () => console.log(`mock OpenF1 + static server on http://localhost:${PORT}`));

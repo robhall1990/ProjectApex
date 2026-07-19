@@ -341,6 +341,15 @@
     </details>
   </div>
   <div class="field">
+    <label>Real-time push (MQTT)</label>
+    <div class="field row" style="margin:0 0 6px">
+      <input type="checkbox" id="inMqttOn" style="width:auto" checked>
+      <label for="inMqttOn" style="margin:0">Use real-time push when signed in (falls back to polling)</label>
+    </div>
+    <input id="inMqttUrl" type="text" placeholder="wss://…  OpenF1 real-time broker URL" autocomplete="off">
+    <div class="hint">During a live session OpenF1's REST API is blocked in browsers (CORS); its MQTT push channel isn't. Paste the WebSocket broker URL from OpenF1's real-time docs and sign in above — timing then streams straight in. Leave blank to always poll (works for replay and after the session).</div>
+  </div>
+  <div class="field">
     <label for="inAnthropic">Anthropic API key (optional — enables Claude insights)</label>
     <input id="inAnthropic" type="password" placeholder="sk-ant-…" autocomplete="off">
     <div class="hint">Calls go straight from your browser to api.anthropic.com. Stored only in this browser — don’t use on shared machines.</div>
@@ -420,6 +429,10 @@ const cfg = {
   set autoAI(v)       { localStorage.setItem("apex.autoAI", v ? "1" : "0"); },
   get pollSec()       { return Math.max(3, parseInt(localStorage.getItem("apex.pollSec") || "5", 10)); },
   set pollSec(v)      { localStorage.setItem("apex.pollSec", String(v)); },
+  get useMqtt()       { return localStorage.getItem("apex.useMqtt") !== "0"; },   // default on
+  set useMqtt(v)      { localStorage.setItem("apex.useMqtt", v ? "1" : "0"); },
+  get mqttUrl()       { return new URLSearchParams(location.search).get("mqtt") || localStorage.getItem("apex.mqttUrl") || ""; },
+  set mqttUrl(v)      { v ? localStorage.setItem("apex.mqttUrl", v) : localStorage.removeItem("apex.mqttUrl"); },
 };
 const API_BASE = new URLSearchParams(location.search).get("api") || "https://api.openf1.org/v1";
 const OF1_TOKEN_URL = new URL(API_BASE, location.href).origin + "/token";
@@ -497,6 +510,7 @@ const S = {
   seenInsightKeys: new Map(),      // key -> expiry ts
   cursors: {},
   pollTimer: null, pollCount: 0, backoff: 0, lastDataAt: 0,
+  mqtt: null, mqttBuf: null, mqttFlushTimer: null, mqttWatchdog: null, transport: null,
   replay: null,                    // {log:[], ptr, t0, t1, t, playing, timer}
   demo: null,
   aiBusy: false, aiTimer: null,
@@ -521,6 +535,8 @@ function resetData() {
 function stopEngines() {
   S.epoch++;
   stopRadioPlayback();
+  stopMqtt();
+  S.transport = null;
   clearInterval(S.pollTimer); S.pollTimer = null;
   if (S.replay) { clearInterval(S.replay.timer); }
   if (S.demo) { clearInterval(S.demo.timer); S.demo = null; }
@@ -538,6 +554,86 @@ async function of(path, params = {}) {
   const res = await fetch(url, { headers });
   if (!res.ok) { const e = new Error("OpenF1 " + res.status); e.status = res.status; throw e; }
   return res.json();
+}
+
+/* ============================== MQTT-over-WebSocket client ==============================
+   OpenF1's real-time push (paid) is MQTT, which — unlike the REST API during a
+   live session — is not subject to browser CORS. This is a dependency-free
+   MQTT 3.1.1 subscriber: just the packets a read-only client needs (CONNECT,
+   SUBSCRIBE, PUBLISH-in, PING, DISCONNECT), spoken over a binary WebSocket. */
+function createMqttClient({ url, username, password, clientId, onConnect, onMessage, onClose, onError }) {
+  let ws, pingTimer, alive = false, closed = false, pid = 0;
+  const enc = new TextEncoder();
+
+  const str = s => { const b = enc.encode(s); return [(b.length >> 8) & 0xff, b.length & 0xff, ...b]; };
+  const remLen = n => { const o = []; do { let d = n % 128; n = Math.floor(n / 128); if (n > 0) d |= 0x80; o.push(d); } while (n > 0); return o; };
+  const send = bytes => { if (ws && ws.readyState === 1) ws.send(new Uint8Array(bytes)); };
+
+  function connectPacket() {
+    let flags = 0x02;                                   // clean session
+    const payload = [...str(clientId || ("apex-" + Math.random().toString(16).slice(2, 10)))];
+    if (username) { flags |= 0x80; payload.push(...str(username)); }
+    if (password) { flags |= 0x40; payload.push(...str(password)); }
+    const vh = [...str("MQTT"), 0x04, flags, 0x00, 0x3c];   // level 4, keepalive 60s
+    const body = [...vh, ...payload];
+    return [0x10, ...remLen(body.length), ...body];
+  }
+  function subscribePacket(filters) {
+    pid = (pid % 65535) + 1;
+    const body = [(pid >> 8) & 0xff, pid & 0xff];
+    for (const f of filters) { body.push(...str(f), 0x00); }   // QoS 0
+    return [0x82, ...remLen(body.length), ...body];
+  }
+
+  // decode a variable-length "remaining length" starting at offset i
+  function readRemLen(buf, i) {
+    let mult = 1, val = 0, byte;
+    do { byte = buf[i++]; val += (byte & 0x7f) * mult; mult *= 128; } while (byte & 0x80);
+    return [val, i];
+  }
+
+  function handlePacket(buf) {
+    const type = buf[0] >> 4;
+    const [, hdrEnd] = readRemLen(buf, 1);
+    if (type === 2) {                                   // CONNACK
+      if (buf[hdrEnd + 1] === 0) { alive = true; onConnect && onConnect(); }
+      else onError && onError(new Error("MQTT CONNACK refused (code " + buf[hdrEnd + 1] + ")"));
+    } else if (type === 3) {                            // PUBLISH
+      let i = hdrEnd;
+      const tlen = (buf[i] << 8) | buf[i + 1]; i += 2;
+      const topic = new TextDecoder().decode(buf.slice(i, i + tlen)); i += tlen;
+      const qos = (buf[0] >> 1) & 0x03;
+      if (qos > 0) i += 2;                              // packet id (we never ack; QoS 0 expected)
+      const payload = new TextDecoder().decode(buf.slice(i));
+      onMessage && onMessage(topic, payload);
+    } else if (type === 13) { /* PINGRESP */ }
+  }
+
+  function open() {
+    try { ws = new WebSocket(url, "mqtt"); } catch (e) { onError && onError(e); return; }
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => { send(connectPacket()); pingTimer = setInterval(() => send([0xc0, 0x00]), 45000); };
+    ws.onmessage = ev => {
+      const data = new Uint8Array(ev.data);
+      // a single WS frame can carry several MQTT packets back to back
+      let i = 0;
+      while (i < data.length) {
+        const [rl, after] = readRemLen(data, i + 1);
+        const end = after + rl;
+        handlePacket(data.slice(i, end));
+        i = end;
+      }
+    };
+    ws.onerror = () => onError && onError(new Error("WebSocket error"));
+    ws.onclose = () => { clearInterval(pingTimer); alive = false; if (!closed) onClose && onClose(); };
+  }
+  open();
+
+  return {
+    subscribe: filters => send(subscribePacket(filters)),
+    isAlive: () => alive,
+    close: () => { closed = true; clearInterval(pingTimer); try { send([0xe0, 0x00]); ws && ws.close(); } catch {} },
+  };
 }
 
 /* ============================== ingest ============================== */
@@ -783,12 +879,13 @@ function renderHeader() {
   const sync = $("#chipSync");
   if (S.mode === "live") {
     sync.style.display = "";
-    if (!S.lastDataAt) { sync.className = "chip"; sync.textContent = "⏳ waiting for data"; }
+    const push = S.transport === "mqtt";
+    if (!S.lastDataAt) { sync.className = "chip"; sync.textContent = push ? "⏳ connecting push…" : "⏳ waiting for data"; }
     else {
       const age = Math.round((Date.now() - S.lastDataAt) / 1000);
       const ok = age <= Math.max(12, cfg.pollSec * 3);
       sync.className = "chip " + (ok ? "sync-ok" : "sync-stale");
-      sync.textContent = ok ? "● updating" : `⚠ stalled ${age < 120 ? age + "s" : Math.round(age / 60) + "m"}`;
+      sync.textContent = ok ? (push ? "● live push" : "● updating") : `⚠ stalled ${age < 120 ? age + "s" : Math.round(age / 60) + "m"}`;
     }
   } else sync.style.display = "none";
 
@@ -1752,13 +1849,72 @@ function apiTrouble(e) {
   }
 }
 
-/* ---------- live polling ---------- */
+/* ---------- live: MQTT push preferred, REST polling as fallback ---------- */
 function startLive() {
   S.mode = "live";
   banner(null); render();
+  if (cfg.useMqtt && cfg.mqttUrl && of1.signedIn()) startLiveMqtt();
+  else startPolling();
+}
+
+function startPolling() {
+  if (S.pollTimer) return;
+  S.transport = "poll";
   const tick = () => pollTick().catch(() => {});
   tick();
   S.pollTimer = setInterval(tick, cfg.pollSec * 1000);
+}
+
+const MQTT_ENDPOINTS = new Set(["drivers", "intervals", "position", "laps", "pit", "stints", "race_control", "weather", "team_radio"]);
+
+async function startLiveMqtt() {
+  const ep = S.epoch;
+  let tok = "";
+  try { tok = await of1Bearer(); } catch {}
+  if (ep !== S.epoch) return;
+  if (!tok) { startPolling(); return; }
+
+  S.transport = "mqtt";
+  S.mqttBuf = {};
+  const flush = () => {
+    if (ep !== S.epoch || !S.mqttBuf) return;
+    const keys = Object.keys(S.mqttBuf);
+    if (!keys.length) return;
+    const buf = S.mqttBuf; S.mqttBuf = {};
+    ingest(buf); render();
+    S.lastDataAt = Date.now(); banner(null);
+  };
+  S.mqttFlushTimer = setInterval(flush, 700);
+
+  S.mqtt = createMqttClient({
+    url: cfg.mqttUrl,
+    username: tok, password: "",
+    onConnect: () => { if (ep === S.epoch) S.mqtt.subscribe(["#"]); },
+    onMessage: (topic, payload) => {
+      const seg = topic.split("/").find(s => MQTT_ENDPOINTS.has(s));
+      if (!seg) return;
+      let obj; try { obj = JSON.parse(payload); } catch { return; }
+      (S.mqttBuf[seg] ||= []).push(...(Array.isArray(obj) ? obj : [obj]));
+    },
+    onError: () => fallbackToPolling(ep),
+    onClose: () => fallbackToPolling(ep),
+  });
+
+  // if push produces nothing within 10s, quietly add polling alongside
+  S.mqttWatchdog = setTimeout(() => { if (ep === S.epoch && !S.lastDataAt) fallbackToPolling(ep); }, 10000);
+}
+
+function fallbackToPolling(ep) {
+  if (ep !== S.epoch || S.mode !== "live") return;
+  stopMqtt();
+  startPolling();
+}
+
+function stopMqtt() {
+  if (S.mqtt) { try { S.mqtt.close(); } catch {} S.mqtt = null; }
+  clearInterval(S.mqttFlushTimer); S.mqttFlushTimer = null;
+  clearTimeout(S.mqttWatchdog); S.mqttWatchdog = null;
+  S.mqttBuf = null;
 }
 
 async function fetchInc(path, dateField = "date") {
@@ -2053,6 +2209,8 @@ $("#btnSettings").addEventListener("click", () => {
   $("#inOF1Pass").value = of1.pass;
   $("#inOF1").value = of1.exp ? "" : of1.token;   // only surface a manually-pasted (non-expiring) token
   $("#inOF1Stay").checked = !!(of1.user && of1.pass) || !of1.token;
+  $("#inMqttOn").checked = cfg.useMqtt;
+  $("#inMqttUrl").value = localStorage.getItem("apex.mqttUrl") || "";
   $("#inAnthropic").value = cfg.anthropicKey;
   $("#inModel").value = cfg.model;
   $("#inAutoAI").checked = cfg.autoAI;
@@ -2129,11 +2287,30 @@ $("#btnOF1Test").addEventListener("click", async () => {
   await probe("4· token as query param", async () =>
     tok ? snip(await fetch(API_BASE + "/sessions?session_key=latest&token=" + encodeURIComponent(tok)))
         : "no token available");
+  // MQTT push: the CORS-proof live channel — connect, subscribe, await a message
+  const mqttUrl = $("#inMqttUrl").value.trim() || cfg.mqttUrl;
+  await probe("5· real-time push (MQTT)", async () => {
+    if (!mqttUrl) return "no broker URL set — paste one in the Real-time push field to test";
+    return await new Promise(resolve => {
+      let done = false;
+      const finish = m => { if (!done) { done = true; try { c.close(); } catch {} resolve(m); } };
+      const c = createMqttClient({
+        url: mqttUrl, username: tok || "anon", password: "",
+        onConnect: () => c.subscribe(["#"]),
+        onMessage: (topic) => finish(`✓ connected & receiving — first topic: ${topic}`),
+        onError: e => finish("✗ " + e.message),
+        onClose: () => finish("✗ connection closed before any data"),
+      });
+      setTimeout(() => finish("✗ connected but no data within 8s (check the URL/topics)"), 8000);
+    });
+  });
 });
 
 $("#btnSaveSettings").addEventListener("click", () => {
   const manual = $("#inOF1").value.trim();   // advanced manual-token field
   if (manual && manual !== of1.token) { of1.token = manual; of1.exp = 0; }
+  cfg.useMqtt = $("#inMqttOn").checked;
+  cfg.mqttUrl = $("#inMqttUrl").value.trim();
   cfg.anthropicKey = $("#inAnthropic").value.trim();
   cfg.model = $("#inModel").value;
   cfg.autoAI = $("#inAutoAI").checked;
