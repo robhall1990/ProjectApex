@@ -317,7 +317,8 @@ server.on("upgrade", (req, socket) => {
       } else if (type === 8) {                                // SUBSCRIBE -> SUBACK, then stream
         const [, i] = mqttRemLen(p, 1);
         sendMqtt([0x90, 0x03, p[i], p[i + 1], 0x00]);
-        // publish the driver + stint snapshot once the subscriber is live
+        // announce the live session (push-only clients learn it from here), then snapshot
+        publish("v1/sessions", { session_key: LIVE.key, session_name: "Race", session_type: "Race", circuit_short_name: "Mockshire", country_name: "Mockland", year: 2026 });
         for (const [n, tla, name, team, colour] of GRID) {
           publish(`v1/drivers/${n}`, { driver_number: n, name_acronym: tla, full_name: name, team_name: team, team_colour: colour, session_key: LIVE.key });
           publish(`v1/stints/${n}`, { driver_number: n, stint_number: 1, compound: "SOFT", lap_start: 1, tyre_age_at_start: 0, session_key: LIVE.key });
