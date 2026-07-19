@@ -61,6 +61,21 @@ fully offline).
   requests are just rejected or delayed until shortly after the session.
 - Data typically appears on OpenF1 with a few seconds' delay vs. the TV feed.
 
+### Real-time push (MQTT) — the CORS-proof live channel
+
+During a live session OpenF1 locks its REST API to authenticated users **and serves the
+locked-down responses without CORS headers**, so browsers can't read them even with a valid
+paid token (curl and Python can — CORS only exists in browsers). OpenF1's other real-time
+channel, **MQTT**, has no such restriction.
+
+The app ships a dependency-free MQTT-over-WebSocket client. In Settings ⚙︎ → **Real-time
+push**, tick it on and paste the broker's WebSocket URL from OpenF1's real-time
+documentation; with sign-in active, live timing then streams straight in — the header shows
+**● live push** instead of **● updating**. If the broker is unreachable the app silently
+falls back to REST polling (which works fine outside the live-session lockdown). Settings ⚙︎
+→ **Test connection** includes a push probe that connects, subscribes, and reports the first
+topic it receives — use it to confirm your broker URL.
+
 ## Claude insights
 
 1. Get an API key at [platform.claude.com](https://platform.claude.com).
