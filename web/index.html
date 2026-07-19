@@ -2100,6 +2100,10 @@ $("#btnOF1Test").addEventListener("click", async () => {
     try { lines.push(label + "\n" + await fn()); } catch (e) { lines.push(`${label}\n✗ ${e.message}`); }
     show();
   };
+  await probe("0· reachability (no-cors)", async () => {
+    await fetch(API_BASE + "/sessions?session_key=latest", { mode: "no-cors" });
+    return "host reachable — if later probes say “Failed to fetch”, CORS headers are the blocker";
+  });
   await probe("1· data, no auth", async () => snip(await fetch(API_BASE + "/sessions?session_key=latest")));
   const user = $("#inOF1User").value.trim(), pass = $("#inOF1Pass").value;
   if (user && pass) {
@@ -2120,6 +2124,11 @@ $("#btnOF1Test").addEventListener("click", async () => {
   await probe("3· data, with bearer", async () =>
     tok ? snip(await fetch(API_BASE + "/sessions?session_key=latest", { headers: { Authorization: "Bearer " + tok } }))
         : "no token available — sign in or paste one under Advanced");
+  // Authorization headers force a CORS preflight; a query-string token doesn't.
+  // If this one works where probe 3 fails, the app can fall back to it.
+  await probe("4· token as query param", async () =>
+    tok ? snip(await fetch(API_BASE + "/sessions?session_key=latest&token=" + encodeURIComponent(tok)))
+        : "no token available");
 });
 
 $("#btnSaveSettings").addEventListener("click", () => {
