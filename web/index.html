@@ -197,6 +197,7 @@
   .field input, .field select { width: 100%; background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
   .field .hint { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
   .field .hint code { font-family: var(--mono); font-size: 11px; }
+  #of1TestOut { margin-top: 8px; padding: 8px 10px; background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; word-break: break-word; color: var(--ink2); max-height: 180px; overflow-y: auto; }
   .of1-status { font-size: 12px; margin-bottom: 6px; display: none; }
   .of1-status.in { display: block; color: #35c46f; }
   .of1-status.out { display: block; color: var(--muted); }
@@ -330,7 +331,9 @@
     <div class="row" style="gap:8px; margin-top:8px">
       <button class="btn primary" id="btnOF1Login" type="button">Sign in</button>
       <button class="btn" id="btnOF1Logout" type="button" style="display:none">Sign out</button>
+      <button class="btn" id="btnOF1Test" type="button">Test connection</button>
     </div>
+    <pre id="of1TestOut" style="display:none"></pre>
     <div class="hint">Free OpenF1 access covers completed sessions. Real-time timing needs a paid account. Sign-in calls <code>api.openf1.org/token</code> straight from your browser; the token refreshes itself as it nears expiry. “Stay signed in” stores your credentials in this browser only — don’t tick it on a shared machine.</div>
     <details style="margin-top:8px">
       <summary class="hint" style="cursor:pointer">Advanced: paste a token manually</summary>
@@ -1739,7 +1742,9 @@ async function loadSession(sessionKey) {
 function banner(html) { const b = $("#banner"); if (html) { b.innerHTML = html; b.style.display = "block"; } else b.style.display = "none"; }
 function apiTrouble(e) {
   if (e && (e.status === 401 || e.status === 403)) {
-    banner(`🔐 OpenF1 rejected the request (${e.status}). Real-time data during a live session needs a paid OpenF1 account — sign in under Settings ⚙︎. Completed sessions are free — try Replay after the session, or Demo mode now.`);
+    banner(of1.signedIn()
+      ? `🔐 OpenF1 rejected the request (${e.status}) even though you're signed in. If you have a paid subscription, make sure it's on this same OpenF1 account — and try Settings ⚙︎ → <b>Test connection</b> to see exactly what the API says. If your subscription came with an API key, paste it under Advanced.`
+      : `🔐 OpenF1 rejected the request (${e.status}). Real-time data during a live session needs a paid OpenF1 account — sign in under Settings ⚙︎. Completed sessions are free — try Replay after the session, or Demo mode now.`);
   } else if (e && e.status === 429) {
     banner("🐢 OpenF1 rate limit hit — polling slowed down automatically.");
   } else {
@@ -1805,7 +1810,12 @@ async function pollTick() {
 }
 function swallow(e) {
   if (e && e.status === 429) { S.backoff = 5; apiTrouble(e); }
-  else if (e && (e.status === 401 || e.status === 403)) { apiTrouble(e); S.backoff = 3; }
+  else if (e && (e.status === 401 || e.status === 403)) {
+    // token may have been invalidated server-side — drop it so the next
+    // request re-authenticates from stored credentials
+    if (of1.user && of1.pass && of1.token) { of1.token = ""; of1.exp = 0; }
+    apiTrouble(e); S.backoff = 3;
+  }
 }
 
 /* ---------- replay ---------- */
@@ -2075,6 +2085,41 @@ $("#btnOF1Logout").addEventListener("click", () => {
   $("#inOF1User").value = ""; $("#inOF1Pass").value = ""; $("#inOF1").value = "";
   renderOF1Status();
   toast("Signed out of OpenF1");
+});
+
+/* Connection tester: three probes with raw status + body, so "why is there no
+   data" is answerable from a phone with no dev console. */
+$("#btnOF1Test").addEventListener("click", async () => {
+  const out = $("#of1TestOut");
+  out.style.display = "block";
+  out.textContent = "Running…";
+  const lines = [];
+  const show = () => { out.textContent = lines.join("\n\n"); };
+  const snip = async res => `HTTP ${res.status} · ${(await res.text()).replace(/\s+/g, " ").slice(0, 160)}`;
+  const probe = async (label, fn) => {
+    try { lines.push(label + "\n" + await fn()); } catch (e) { lines.push(`${label}\n✗ ${e.message}`); }
+    show();
+  };
+  await probe("1· data, no auth", async () => snip(await fetch(API_BASE + "/sessions?session_key=latest")));
+  const user = $("#inOF1User").value.trim(), pass = $("#inOF1Pass").value;
+  if (user && pass) {
+    await probe("2· token endpoint", async () => {
+      const res = await fetch(OF1_TOKEN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ username: user, password: pass }),
+      });
+      if (!res.ok) return snip(res);
+      const j = await res.json().catch(() => ({}));
+      return j.access_token
+        ? `HTTP ${res.status} · access_token ✓ (expires_in ${j.expires_in ?? "?"}s)`
+        : `HTTP ${res.status} · NO access_token — body: ${JSON.stringify(j).slice(0, 140)}`;
+    });
+  } else { lines.push("2· token endpoint\n(enter email + password above to test)"); show(); }
+  const tok = await of1Bearer();
+  await probe("3· data, with bearer", async () =>
+    tok ? snip(await fetch(API_BASE + "/sessions?session_key=latest", { headers: { Authorization: "Bearer " + tok } }))
+        : "no token available — sign in or paste one under Advanced");
 });
 
 $("#btnSaveSettings").addEventListener("click", () => {
